@@ -81,19 +81,20 @@ The system must:
 
 ## API Requirements and Implementation Suggestions
 
-### 1) Daily Rates
+### 1) USD Exchange Rates
 
-#### Create/Upsert Daily Rate
+#### Create/Upsert USD Exchange Rate
 `POST /rates`
 ```json
 {
-  "rate_date": "2026-02-02",
-  "base_currency": "PHP",
-  "quote_currency": "USD",
-  "side": "SELL",
-  "rate": "1.3550"
+  "currency_code": "PHP",
+  "currency_name": "Philippine Peso",
+  "rate_per_usd": "62.487000"
 }
 ```
+
+Rates are matched by `currency_code`. Existing currencies are updated; new currencies are
+inserted into `usd_exchange_rates`.
 
 ### 2) Transactions
 #### Create Daily Rate
@@ -192,3 +193,49 @@ Sample Response from Payload Variant A
 
 * Provide API docs (OpenAPI/Swagger auto-generated is fine).
 * You may also propose alternate API docs methodology.
+
+## Project Template
+
+This repository includes a FastAPI implementation under `app/` with SQLAlchemy persistence,
+Decimal-based calculations, and a SQLite default for local development. The API does not accept
+or store customer details.
+
+### Run locally
+
+```powershell
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install -e ".[dev]"
+uvicorn app.main:app --reload
+```
+
+OpenAPI documentation is available at `http://localhost:8000/docs`.
+
+### Run with Docker Compose
+
+```powershell
+docker compose up --build
+```
+
+Compose starts the API and connects it to the PostgreSQL instance running on the host. Docker
+uses `host.docker.internal` to reach the host, and the API reads rates from the `fx_exam`
+database.
+
+### Test and lint
+
+```powershell
+pytest
+ruff check .
+```
+
+### API behavior
+
+- `POST /rates` creates or updates one USD exchange rate using `currency_code` as the key.
+  `GET /rates?rate_date=YYYY-MM-DD` lists rates updated on that date.
+- `POST /transactions` requires exactly one of `foreign_amount` or `base_amount`.
+- A transaction looks up the rate matching its timestamp date, currencies, and side.
+- `effective_rate` is copied into the transaction, preserving the rate snapshot if the daily rate
+  changes later.
+- Rates mean base-currency units per foreign-currency unit. BUY and SELL use separate polymorphic
+  calculation classes so side-specific fees and rounding rules can evolve independently.
+- Missing rates return `409 Conflict`; invalid currency codes, sides, and amounts return `422`.
