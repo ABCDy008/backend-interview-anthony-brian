@@ -11,7 +11,7 @@ Functional Requirements
     - Yes, there will be both a transactions table and a exchange rates table.
 4. Support BUY and SELL transaction sides with potentially different rates.
 5. [DONE] Provide CRUD operations for daily exchange rates.
-    - Created CRUD operations, and also batch versions of operations which make sense. For example, if we want to update/delete exchange rates, it would be normally to correct something wrong with the ingestion. So, it should be doable through a batch call.
+    - Created CRUD operations, and also batch versions of operations which make sense. For example, if we want to update/delete exchange rates, it would be normally to correct something wrong with the ingestion. So, it should be doable through a batch call. Also, added specific CRUD operations based on resource and one based on the business context (currencies, side, date).
 6. Look up the applicable rate using:
     a. Transaction date
     b. Base currency

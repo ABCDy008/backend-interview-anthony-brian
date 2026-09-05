@@ -1,4 +1,19 @@
-INSERT INTO exchange_rates (rate_date, base_currency, target_currency, exchange_rate, created_at) VALUES
+INSERT INTO exchange_rates (
+	rate_date,
+	base_currency,
+	target_currency,
+	side,
+	exchange_rate,
+	created_at
+)
+SELECT CURRENT_DATE,
+	   published.base_currency,
+	   published.target_currency,
+	   sides.rate_side,
+	   published.exchange_rate * sides.multiplier,
+	   published.created_at
+FROM (
+	VALUES
 ('2026-09-02', 'PHP', 'AED', 0.0586017670, NOW()),
 ('2026-09-02', 'PHP', 'AFN', 1.0511362700, NOW()),
 ('2026-09-02', 'PHP', 'ALL', 1.2717746300, NOW()),
@@ -171,5 +186,11 @@ INSERT INTO exchange_rates (rate_date, base_currency, target_currency, exchange_
 ('2026-09-02', 'PHP', 'ZMW', 0.3057403200, NOW()),
 ('2026-09-02', 'PHP', 'ZWG', 0.4276474600, NOW()),
 ('2026-09-02', 'PHP', 'ZWL', 1068.57305046, NOW())
-ON CONFLICT (rate_date, base_currency, target_currency) DO UPDATE
+) AS published(rate_date, base_currency, target_currency, exchange_rate, created_at)
+CROSS JOIN (
+	VALUES
+		('BUY', 1.01::numeric),
+		('SELL', 0.99::numeric)
+) AS sides(rate_side, multiplier)
+ON CONFLICT (rate_date, base_currency, target_currency, side) DO UPDATE
 SET exchange_rate = EXCLUDED.exchange_rate;

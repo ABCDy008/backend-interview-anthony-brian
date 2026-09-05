@@ -32,8 +32,8 @@ class BuyCalculation(ExchangeCalculation):
     def calculate(
         self, *, foreign_amount: Decimal | None, base_amount: Decimal | None
     ) -> Calculation:
-        foreign = foreign_amount or (base_amount / self.rate)
-        base = base_amount or (foreign * self.rate)
+        foreign = foreign_amount or (base_amount * self.rate)
+        base = base_amount or (foreign / self.rate)
         return Calculation(self.money(foreign), self.money(base))
 
 
@@ -43,8 +43,8 @@ class SellCalculation(ExchangeCalculation):
     def calculate(
         self, *, foreign_amount: Decimal | None, base_amount: Decimal | None
     ) -> Calculation:
-        foreign = foreign_amount or (base_amount / self.rate)
-        base = base_amount or (foreign * self.rate)
+        foreign = foreign_amount or (base_amount * self.rate)
+        base = base_amount or (foreign / self.rate)
         return Calculation(self.money(foreign), self.money(base))
 
 
