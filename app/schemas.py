@@ -333,12 +333,3 @@ class ForeignExchangeTransactionResponse(ForeignExchangeTransactionFields):
     id: UUID
     transaction_id: UUID
     created_at: datetime | None
-
-
-class CrossSellTransactionResponse(BaseModel):
-    transaction_id: UUID
-    transaction_timestamp: datetime
-    source_currency: str
-    target_currency: str
-    source_amount: Decimal
-    target_amount: Decimal

@@ -2,12 +2,10 @@ from datetime import UTC, datetime
 from decimal import Decimal
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
-from uuid import UUID
 
 import pytest
 from pydantic import ValidationError
 
-from app.api.transactions import _cross_sell_response
 from app.domain import BuyCalculation, InsufficientAmountError, SellCalculation
 from app.schemas import (
     BuyTransactionCreate,
@@ -373,32 +371,3 @@ def test_cross_sell_accepts_target_amount():
     assert create.call_args.kwargs["source_amount"] is None
     assert create.call_args.kwargs["target_amount"] == Decimal(15000)
 
-
-def test_cross_sell_response_uses_source_and_target_fields():
-    transaction_id = UUID("87e6dfcd-4839-4d3b-8138-1345589abb96")
-    timestamp = datetime(2026, 9, 5, 2, 15, tzinfo=UTC)
-    buy_leg = SimpleNamespace(
-        transaction_id=transaction_id,
-        transaction_timestamp=timestamp,
-        target_currency="USD",
-        side="BUY",
-        foreign_amount=Decimal(100),
-    )
-    sell_leg = SimpleNamespace(
-        transaction_id=transaction_id,
-        transaction_timestamp=timestamp,
-        target_currency="JPY",
-        side="SELL",
-        foreign_amount=Decimal("15701.9"),
-    )
-
-    response = _cross_sell_response([buy_leg, sell_leg])
-
-    assert response.model_dump() == {
-        "transaction_id": transaction_id,
-        "transaction_timestamp": timestamp,
-        "source_currency": "USD",
-        "target_currency": "JPY",
-        "source_amount": Decimal(100),
-        "target_amount": Decimal("15701.9"),
-    }

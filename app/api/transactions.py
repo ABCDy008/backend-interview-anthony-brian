@@ -10,7 +10,6 @@ from app.domain import InsufficientAmountError
 from app.schemas import (
     BuyTransactionCreate,
     CrossSellTransactionCreate,
-    CrossSellTransactionResponse,
     ExchangeRateSide,
     ForeignExchangeTransactionResponse,
     ForeignExchangeTransactionUpdate,
@@ -41,19 +40,6 @@ def _transaction_conflict(error: MissingExchangeRateError) -> HTTPException:
 
 def _invalid_operation(error: InvalidTransactionOperationError) -> HTTPException:
     return HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(error))
-
-
-def _cross_sell_response(legs) -> CrossSellTransactionResponse:
-    buy_leg = next(leg for leg in legs if leg.side == ExchangeRateSide.BUY)
-    sell_leg = next(leg for leg in legs if leg.side == ExchangeRateSide.SELL)
-    return CrossSellTransactionResponse(
-        transaction_id=buy_leg.transaction_id,
-        transaction_timestamp=buy_leg.transaction_timestamp,
-        source_currency=buy_leg.target_currency,
-        target_currency=sell_leg.target_currency,
-        source_amount=buy_leg.foreign_amount,
-        target_amount=sell_leg.foreign_amount,
-    )
 
 
 @router.get(
@@ -165,7 +151,7 @@ def create_sell(
 
 @router.post(
     "/cross-sell",
-    response_model=CrossSellTransactionResponse,
+    response_model=list[ForeignExchangeTransactionResponse],
     status_code=status.HTTP_201_CREATED,
     summary="Record a cross-sell transaction",
     description=(
@@ -181,9 +167,9 @@ def create_sell(
 def create_cross_sell(
     payload: CrossSellTransactionCreate,
     session: DbSession,
-) -> CrossSellTransactionResponse:
+) -> list[ForeignExchangeTransactionResponse]:
     try:
-        return _cross_sell_response(create_cross_sell_transaction(session, payload))
+        return create_cross_sell_transaction(session, payload)
     except MissingExchangeRateError as error:
         raise _transaction_conflict(error) from None
     except InsufficientAmountError as error:
