@@ -92,10 +92,6 @@ class ForeignExchangeTransaction(Transaction):
             name="positive_foreign_exchange_transaction_base_amount",
         ),
         CheckConstraint(
-            "rounded_amount IS NULL OR rounded_amount >= 0",
-            name="non_negative_foreign_exchange_transaction_rounded_amount",
-        ),
-        CheckConstraint(
             "fee IS NULL OR fee >= 0",
             name="non_negative_foreign_exchange_transaction_fee",
         ),
@@ -114,7 +110,7 @@ class ForeignExchangeTransaction(Transaction):
     effective_rate: Mapped[Decimal] = mapped_column(Numeric(20, 10), nullable=False)
     foreign_amount: Mapped[Decimal] = mapped_column(Numeric(20, 10), nullable=False)
     base_amount: Mapped[Decimal] = mapped_column(Numeric(20, 10), nullable=False)
-    rounded_amount: Mapped[Decimal | None] = mapped_column(Numeric(20, 10))
+    rounding_adjustment: Mapped[Decimal | None] = mapped_column(Numeric(20, 10))
     fee: Mapped[Decimal | None] = mapped_column(Numeric(20, 10))
 
 

@@ -39,6 +39,9 @@ DbSession = Annotated[Session, Depends(get_db)]
 @router.get(
     "",
     response_model=list[ExchangeRateResponse],
+    summary="List exchange rates",
+    description="List daily rates, optionally filtered by date or currency pair.",
+    response_description="The matching exchange-rate snapshots.",
 )
 def list_rates(
     session: DbSession,
@@ -63,6 +66,10 @@ def list_rates(
 @router.get(
     "/lookup",
     response_model=ExchangeRateResponse,
+    summary="Look up an exchange rate",
+    description="Find the BUY or SELL rate for a date, base currency, and target currency.",
+    response_description="The requested exchange rate.",
+    responses={404: {"description": "No exchange rate matches the supplied key."}},
 )
 def get_rate_by_key(
     session: DbSession,
@@ -89,6 +96,9 @@ def get_rate_by_key(
 @router.get(
     "/{rate_id}",
     response_model=ExchangeRateResponse,
+    summary="Get an exchange rate",
+    description="Retrieve one exchange-rate record by its UUID.",
+    responses={404: {"description": "Exchange rate not found."}},
 )
 def get_rate(rate_id: UUID, session: DbSession) -> ExchangeRateResponse:
     rate = get_exchange_rate(session, rate_id)
@@ -105,6 +115,9 @@ def get_rate(rate_id: UUID, session: DbSession) -> ExchangeRateResponse:
     "",
     response_model=ExchangeRateResponse,
     status_code=status.HTTP_201_CREATED,
+    summary="Create an exchange rate",
+    description="Create one daily BUY or SELL rate for a currency pair.",
+    responses={409: {"description": "A rate already exists for this date and currency pair."}},
 )
 def create_rate(
     payload: ExchangeRateCreate,
@@ -123,6 +136,9 @@ def create_rate(
     "/batch",
     response_model=ExchangeRateBatchResponse,
     status_code=status.HTTP_201_CREATED,
+    summary="Create exchange rates in bulk",
+    description="Create multiple rates for one date and base currency.",
+    responses={409: {"description": "One or more rates already exist."}},
 )
 def create_rate_batch(
     payload: ExchangeRateBatchCreate,
@@ -142,6 +158,9 @@ def create_rate_batch(
 @router.put(
     "/batch/{rate_date}",
     response_model=ExchangeRateBatchResponse,
+    summary="Replace a daily rate batch",
+    description="Replace the rates for one date and base currency.",
+    responses={409: {"description": "The replacement conflicts with an existing rate."}},
 )
 def replace_rate_batch(
     rate_date: date,
@@ -161,6 +180,9 @@ def replace_rate_batch(
 @router.put(
     "/{rate_date}/{base_currency}/{target_currency}/{side}",
     response_model=ExchangeRateResponse,
+    summary="Update a rate by business key",
+    description="Update the value of a rate identified by date, currencies, and side.",
+    responses={404: {"description": "Exchange rate not found."}},
 )
 def update_rate_by_key(
     rate_date: date,
@@ -189,6 +211,12 @@ def update_rate_by_key(
 @router.put(
     "/{rate_id}",
     response_model=ExchangeRateResponse,
+    summary="Replace an exchange rate",
+    description="Replace an exchange-rate record by UUID.",
+    responses={
+        404: {"description": "Exchange rate not found."},
+        409: {"description": "A rate already exists for the replacement key."},
+    },
 )
 def update_rate(
     rate_id: UUID,
@@ -214,6 +242,8 @@ def update_rate(
 @router.delete(
     "/batch/{rate_date}",
     response_model=ExchangeRateBatchDeleteResponse,
+    summary="Delete a daily rate batch",
+    description="Delete all rates for a date and base currency.",
 )
 def delete_rate_batch(
     rate_date: date,
@@ -236,6 +266,9 @@ def delete_rate_batch(
 @router.delete(
     "/{rate_date}/{base_currency}/{target_currency}/{side}",
     status_code=status.HTTP_204_NO_CONTENT,
+    summary="Delete a rate by business key",
+    description="Delete one rate identified by date, currencies, and side.",
+    responses={404: {"description": "Exchange rate not found."}},
 )
 def delete_rate_by_key(
     rate_date: date,
@@ -262,6 +295,9 @@ def delete_rate_by_key(
 @router.delete(
     "/{rate_id}",
     status_code=status.HTTP_204_NO_CONTENT,
+    summary="Delete an exchange rate",
+    description="Delete one exchange-rate record by UUID.",
+    responses={404: {"description": "Exchange rate not found."}},
 )
 def delete_rate(rate_id: UUID, session: DbSession) -> Response:
     rate = get_exchange_rate(session, rate_id)

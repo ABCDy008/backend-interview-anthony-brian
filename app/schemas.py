@@ -3,12 +3,20 @@ from decimal import Decimal
 from enum import StrEnum
 from uuid import UUID
 
+import pycountry
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 class ExchangeRateSide(StrEnum):
     BUY = "BUY"
     SELL = "SELL"
+
+
+def normalize_currency_code(value: str) -> str:
+    currency_code = value.upper()
+    if pycountry.currencies.get(alpha_3=currency_code) is None:
+        raise ValueError("currency code must be a valid ISO 4217 code")
+    return currency_code
 
 
 class ExchangeRateFields(BaseModel):
@@ -33,7 +41,7 @@ class ExchangeRateFields(BaseModel):
     @field_validator("base_currency", "target_currency")
     @classmethod
     def normalize_currency(cls, value: str) -> str:
-        return value.upper()
+        return normalize_currency_code(value)
 
 
 class ExchangeRateCreate(ExchangeRateFields):
@@ -64,7 +72,7 @@ class ExchangeRateBatchItem(BaseModel):
     @field_validator("target_currency")
     @classmethod
     def normalize_currency(cls, value: str) -> str:
-        return value.upper()
+        return normalize_currency_code(value)
 
 
 class ExchangeRateBatchCreate(BaseModel):
@@ -79,7 +87,7 @@ class ExchangeRateBatchCreate(BaseModel):
     @field_validator("base_currency")
     @classmethod
     def normalize_currency(cls, value: str) -> str:
-        return value.upper()
+        return normalize_currency_code(value)
 
     @model_validator(mode="after")
     def validate_unique_targets(self):
@@ -102,7 +110,7 @@ class ExchangeRateBatchUpdate(BaseModel):
     @field_validator("base_currency")
     @classmethod
     def normalize_currency(cls, value: str) -> str:
-        return value.upper()
+        return normalize_currency_code(value)
 
     @model_validator(mode="after")
     def validate_unique_targets(self):
@@ -161,9 +169,8 @@ class ForeignExchangeTransactionFields(BaseModel):
         max_digits=20,
         decimal_places=10,
     )
-    rounded_amount: Decimal | None = Field(
+    rounding_adjustment: Decimal | None = Field(
         default=None,
-        ge=0,
         max_digits=20,
         decimal_places=10,
     )
@@ -177,7 +184,7 @@ class ForeignExchangeTransactionFields(BaseModel):
     @field_validator("base_currency", "target_currency")
     @classmethod
     def normalize_currency(cls, value: str) -> str:
-        return value.upper()
+        return normalize_currency_code(value)
 
     @model_validator(mode="after")
     def validate_currency_pair(self):
@@ -200,7 +207,14 @@ class ForeignExchangeTransactionCreate(BaseModel):
         pattern=r"^[A-Za-z]{3}$",
     )
     side: ExchangeRateSide
-    foreign_amount: Decimal = Field(
+    foreign_amount: Decimal | None = Field(
+        default=None,
+        gt=0,
+        max_digits=20,
+        decimal_places=10,
+    )
+    base_amount: Decimal | None = Field(
+        default=None,
         gt=0,
         max_digits=20,
         decimal_places=10,
@@ -209,14 +223,103 @@ class ForeignExchangeTransactionCreate(BaseModel):
     @field_validator("base_currency", "target_currency")
     @classmethod
     def normalize_currency(cls, value: str) -> str:
-        return value.upper()
+        return normalize_currency_code(value)
 
     @model_validator(mode="after")
     def validate_create_amounts(self):
-        if self.foreign_amount is None:
-            raise ValueError("provide foreign_amount")
+        if (self.foreign_amount is None) == (self.base_amount is None):
+            raise ValueError("provide exactly one of foreign_amount or base_amount")
         if self.base_currency == self.target_currency:
             raise ValueError("base_currency and target_currency must differ")
+        return self
+
+
+class TransactionOperationFields(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    transaction_id: UUID | None = None
+    transaction_timestamp: datetime
+    target_currency: str = Field(
+        min_length=3,
+        max_length=3,
+        pattern=r"^[A-Za-z]{3}$",
+    )
+    foreign_amount: Decimal | None = Field(
+        default=None,
+        gt=0,
+        max_digits=20,
+        decimal_places=10,
+    )
+    base_amount: Decimal | None = Field(
+        default=None,
+        gt=0,
+        max_digits=20,
+        decimal_places=10,
+    )
+
+    @field_validator("target_currency")
+    @classmethod
+    def normalize_currency(cls, value: str) -> str:
+        return normalize_currency_code(value)
+
+    @model_validator(mode="after")
+    def validate_amounts(self):
+        if (self.foreign_amount is None) == (self.base_amount is None):
+            raise ValueError("provide exactly one of foreign_amount or base_amount")
+        return self
+
+
+class BuyTransactionCreate(TransactionOperationFields):
+    pass
+
+
+class SellTransactionCreate(TransactionOperationFields):
+    pass
+
+
+class CrossSellTransactionCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    transaction_id: UUID | None = None
+    transaction_timestamp: datetime
+    source_currency: str = Field(
+        min_length=3,
+        max_length=3,
+        pattern=r"^[A-Za-z]{3}$",
+    )
+    target_currency: str = Field(
+        min_length=3,
+        max_length=3,
+        pattern=r"^[A-Za-z]{3}$",
+    )
+    source_amount: Decimal | None = Field(
+        default=None,
+        gt=0,
+        max_digits=20,
+        decimal_places=10,
+    )
+    target_amount: Decimal | None = Field(
+        default=None,
+        gt=0,
+        max_digits=20,
+        decimal_places=10,
+    )
+
+    @field_validator("source_currency", "target_currency")
+    @classmethod
+    def normalize_currency(cls, value: str) -> str:
+        return normalize_currency_code(value)
+
+    @model_validator(mode="after")
+    def validate_currency_pair(self):
+        if self.source_currency == self.target_currency:
+            raise ValueError("source_currency and target_currency must differ")
+        return self
+
+    @model_validator(mode="after")
+    def validate_amounts(self):
+        if (self.source_amount is None) == (self.target_amount is None):
+            raise ValueError("provide exactly one of source_amount or target_amount")
         return self
 
 
