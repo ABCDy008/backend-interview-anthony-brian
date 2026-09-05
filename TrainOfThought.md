@@ -1,5 +1,24 @@
 # Money Changer Web API
 
+## Local Development Quick Reference
+
+1. **Prerequisites:** Install Docker Desktop with Compose, or Python 3.14 for running the API directly.
+2. **Build the containers:** From this directory, run `docker compose build`.
+3. **Start the application:** Run `docker compose up --build`. The API container automatically runs `alembic upgrade head`, seeds the exchange rates, and starts Uvicorn.
+4. **Operate the application:**
+    - API: `http://localhost:8000`
+    - Swagger UI: `http://localhost:8000/`
+    - Swagger alias: `http://localhost:8000/docs`
+    - ReDoc: `http://localhost:8000/redoc`
+    - OpenAPI JSON: `http://localhost:8000/openapi.json`
+    - Health check: `http://localhost:8000/health`
+5. **Inspect the running stack:** Use `docker compose ps` for status and `docker compose logs -f api` for API logs.
+6. **Run tests locally:** Use `python -m pytest -q`; measure coverage with `python -m coverage run -m pytest -q` followed by `python -m coverage report -m`.
+7. **Run lint and compilation checks:** Use `ruff check app tests` and `python -m compileall -q app tests`.
+8. **Run the API directly:** Copy `.env.example` to `.env`, create a Python 3.14 virtual environment, install with `python -m pip install -e ".[dev]"`, start PostgreSQL with `docker compose up -d db`, run `alembic upgrade head`, run `python -m scripts.seed`, then start with `uvicorn app.main:app --reload`.
+9. **Stop the application:** Press `Ctrl+C` for a foreground `docker compose up`, or run `docker compose down` from another terminal.
+10. **Reset the database:** Run `docker compose down -v` to stop the stack and delete the PostgreSQL volume, then run `docker compose up --build` to rebuild the database from migrations and seed data. This deletes local database data.
+
 # Functional Requirements
 Functional Requirements
 
@@ -36,8 +55,11 @@ Functional Requirements
     - Example: Imagine a USD target_currency on a BUY transaction. If the `foreign_amount` is 100, then the interpretation is that the store is buying 100 USD and will give the equivalent PHP for that side of the exchange rate. But if instead of `foreign_amount` the system uses `base_amount`, then what will happen is it would give USD up to 100 PHP, still using the BUY exchange rate.
     - For cross-sell, since there is a pre-defined direction, what we did is implement a similar logic where it will now ask for either a `source_amount` or `target_amount` and use that as a constraint based on the source and target currency respectively.
 8. [DONE] Calculate the missing amount using the applicable rate.
-    - 
+    - This is shown in the `domain.py` file with the logic of `BuyCalculation` and `SellCalculation` classes.
 9. [DONE] Apply business rules such as fees, rounding, and adjustments.
+    - This is similarly shown in the `domain.py` file with the logic of `BuyCalculation` and `SellCalculation` classes. For fees, I don't know what the industry standard is so I just put a random amount like 1 PHP and 0.5 PHP for Buy and Sell fees respectively. The fee is already deducted from the amount specified, and will be deducted before or after the exchange depending on the call.
+    - For rounding, we implement banker's rounding or round half even. This lessens the impact overall of the bias of the normal rounding where 5 means round up all the time. Now, it is split depending on the nearest even number. This is from research but I'm not sure if this is the standard.
+    - We save both fees and rounding on the DB, and the adjustments happen in realtime for the fees.
 10. [DONE] Store the exact effective rate used as a transaction snapshot.
     - There is an effective_rate column in the foreign_exchange_transactions table. This will directly store the exchange_rate of the specific side depending on the transaction_date.
 11. [DONE] Preserve the transaction’s effective rate if daily rates change later.
@@ -58,8 +80,9 @@ Functional Requirements
     - Look into `_transaction_conflict` function on `transactions.py` file.
     - We can see this function used in the buy, sell, and cross-sell api endpoints.
 16. [DONE] Demonstrate inheritance or polymorphism, such as different calculation behavior for BUY and SELL.
-    - 
-17. [TODO] Provide API documentation through OpenAPI/Swagger.
+    - BuyCalculation and SellCalculation, come from the same base class. They expose different behaviors like different directions for the fees. I would imagine that if we were to add other types of transactions, there would just be other classes extending from the base class but would expose other features like discounts, rebates, promos, convenience fees, etc.
+17. [DONE] Provide API documentation through OpenAPI/Swagger.
+    - This can be accessed with http://localhost:8000. It is an auto-generated swagger docs from the API endpoints.
 
 ## Non-Functional Requirements
 1. [DONE] Use a mainstream Python web framework, preferably FastAPI.
@@ -69,14 +92,17 @@ Functional Requirements
 3. [DONE] Use Decimal rather than floating-point values for financial calculations.
     - This project uses Numeric data type in SQL Alchemy for these kinds of values like the `exchange_rate` column in the `exchange_rates` table.
 4. [DONE] Use database migrations, preferably Alembic.
-    - This project uses Alembic to track database schema structure over time.
+    - This project uses Alembic to track database schema structure over time. We can see this under the `versions` folder under `alembic` folder.
 5. [DONE] Separate responsibilities into maintainable components such as routes, schemas, services, domain logic, and persistence models.
+    - This project uses all of the items here. They should all be aptly named, except for the routes, which are split into different files to split the endpoint definitions.
 6. [DONE] Provide unit tests for rate lookup and transaction calculation rules.
     - The unit tests in `tests/test_transaction_operations.py` covers exact rate-key lookup, missing rates, BUY/SELL calculations, rounding, signed adjustments, fees, and effective-rate snapshots.
 7. [DONE] Keep the API behavior and business rules clearly documented.
-    - We generated a swagger documentation.
-8. [TODO] Make the system extensible so new transaction types can be added with minimal changes to existing integration points.
-9. [TODO] Provide a straightforward local development setup.
+    - We generated a swagger documentation for the project. They clearly show the description of each endpoint, the expected schema, and the expected response.
+8. [DONE] Make the system extensible so new transaction types can be added with minimal changes to existing integration points.
+    - The models.py and domain.py files respectively show that we use inheritance and polymorphism to think about the components of this application. This should make it easy to add more transaction types in the future.
+9. [DONE] Provide a straightforward local development setup.
+    - Added in this markdown file at the very top is the setup for local development.
 10. [DONE] Support containerized execution through Docker Compose.
     - This project is using docker and the different services are defined in the `docker-compose.yml` file.
 
