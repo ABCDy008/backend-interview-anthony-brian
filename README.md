@@ -12,6 +12,22 @@
 5. You can now access the different APIs documented on the documentation.
 6. **Stop the application:** Press `Ctrl+C` in the terminal running Compose.
 
+# API Contract Guide
+
+The exchange-rate API exposes both resource-ID operations and business-key operations
+because they serve different workflows:
+
+- `GET /exchange-rates` returns a collection and supports optional date and currency filters.
+- `GET /exchange-rates/lookup` returns exactly one rate when all four business-key fields are supplied: `rate_date`, `base_currency`, `target_currency`, and `side`.
+- `GET /exchange-rates/{rate_id}` retrieves one rate when its UUID is known.
+- `POST /exchange-rates` creates one rate. `POST /exchange-rates/batch` creates a daily rate set for one base currency and returns the created records with a count.
+- `PUT /exchange-rates/batch/{rate_date}` replaces a complete daily rate set. `DELETE /exchange-rates/batch/{rate_date}` removes all rates for a date and base currency.
+- The business-key `PUT` and `DELETE` routes are convenient when the caller has the date, currencies, and side but does not have the UUID. The UUID routes remain available for direct resource operations.
+
+For transactions, BUY and SELL each return one transaction record. Cross-sell returns two
+records in execution order: a BUY leg for the source currency followed by a SELL leg for
+the target currency. Both records share the same `transaction_id`.
+
 # Running Unit Tests
 1. py -3.14 -m venv .venv (create base virtual env)
 2. .\.venv\Scripts\Activate.ps1 (activate and go inside virtual env)

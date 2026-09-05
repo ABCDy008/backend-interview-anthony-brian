@@ -46,8 +46,11 @@ def _invalid_operation(error: InvalidTransactionOperationError) -> HTTPException
     "",
     response_model=list[ForeignExchangeTransactionResponse],
     summary="List transactions",
-    description="List recorded transactions with optional timestamp, currency, side, and pagination filters.",
-    response_description="The matching transactions.",
+    description=(
+        "List persisted transaction legs with optional timestamp, currency, side, and "
+        "pagination filters. A cross-sell appears as two records sharing one transaction_id."
+    ),
+    response_description="The matching persisted transaction legs.",
 )
 def list_transactions(
     session: DbSession,
@@ -77,7 +80,10 @@ def list_transactions(
     "/{transaction_row_id}",
     response_model=ForeignExchangeTransactionResponse,
     summary="Get a transaction",
-    description="Retrieve one recorded transaction by its database row UUID.",
+    description=(
+        "Retrieve one persisted transaction leg by its database row UUID. For a cross-sell, "
+        "use transaction_id with the collection endpoint to retrieve both legs."
+    ),
     responses={404: {"description": "Transaction not found."}},
 )
 def get_transaction(
@@ -100,7 +106,8 @@ def get_transaction(
     summary="Record a BUY transaction",
     description=(
         "Record the store buying foreign currency from a customer. Provide exactly one of "
-        "foreign_amount or base_amount. A fixed PHP 1.00 fee is deducted from the customer payout."
+        "foreign_amount or base_amount. A fixed PHP 1.00 fee is deducted from the customer payout. "
+        "The response is a one-item list containing the persisted BUY leg."
     ),
     responses={
         409: {"description": "No matching daily BUY rate exists."},
@@ -128,7 +135,8 @@ def create_buy(
     summary="Record a SELL transaction",
     description=(
         "Record the store selling foreign currency to a customer. Provide exactly one of "
-        "foreign_amount or base_amount. A fixed PHP 0.50 fee is added to the customer payment."
+        "foreign_amount or base_amount. A fixed PHP 0.50 fee is added to the customer payment. "
+        "The response is a one-item list containing the persisted SELL leg."
     ),
     responses={
         409: {"description": "No matching daily SELL rate exists."},
@@ -157,7 +165,14 @@ def create_sell(
     description=(
         "Convert between two foreign currencies through the configured home currency. "
         "Provide exactly one of source_amount or target_amount. Both the BUY PHP 1.00 "
-        "and SELL PHP 0.50 fees apply."
+        "and SELL PHP 0.50 fees apply. The response contains two transaction legs: "
+        "a BUY leg for source_currency and a SELL leg for target_currency. Both legs "
+        "share the same transaction_id and are returned using the standard transaction "
+        "response schema."
+    ),
+    response_description=(
+        "The two persisted transaction legs, returned in execution order: BUY source "
+        "currency, then SELL target currency."
     ),
     responses={
         409: {"description": "A required daily BUY or SELL rate is missing."},
@@ -168,6 +183,8 @@ def create_cross_sell(
     payload: CrossSellTransactionCreate,
     session: DbSession,
 ) -> list[ForeignExchangeTransactionResponse]:
+    """Create and return the BUY and SELL legs of a cross-sell transaction."""
+
     try:
         return create_cross_sell_transaction(session, payload)
     except MissingExchangeRateError as error:

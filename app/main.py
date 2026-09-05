@@ -35,7 +35,11 @@ app = FastAPI(
         },
         {
             "name": "exchange-rates",
-            "description": "Create, inspect, update, and delete daily BUY and SELL rates.",
+            "description": (
+                "Manage daily BUY and SELL rate resources. Collection endpoints return "
+                "lists, /lookup finds one rate by its complete business key, and batch "
+                "endpoints support daily ingestion and replacement."
+            ),
         },
         {
             "name": "transactions",

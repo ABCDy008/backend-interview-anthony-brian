@@ -155,6 +155,8 @@ def create_cross_sell_transaction(
     session: Session,
     payload: CrossSellTransactionCreate,
 ) -> list[ForeignExchangeTransaction]:
+    """Create two linked legs: BUY the source currency, then SELL the target currency."""
+
     home_currency = get_settings().home_currency
     if home_currency in (payload.source_currency, payload.target_currency):
         raise InvalidTransactionOperationError(
@@ -219,9 +221,11 @@ def _create_cross_currency_transaction(
     source_amount: Decimal | None = None,
     target_amount: Decimal | None = None,
 ) -> list[ForeignExchangeTransaction]:
-    """Neither currency is the home currency, so route the trade through it:
-    BUY payload.base_currency for home_currency, then SELL payload.target_currency
-    for the home_currency proceeds. Persisted as two rows sharing one transaction_id.
+    """Route a non-home-currency exchange through the configured home currency.
+
+    The BUY leg acquires the source currency using home-currency proceeds. The SELL
+    leg spends those proceeds to acquire the target currency. Both rows share one
+    transaction_id so callers can treat them as one cross-sell operation.
     """
     buy_rate = get_exchange_rate_by_key(
         session,

@@ -20,22 +20,27 @@ def normalize_currency_code(value: str) -> str:
 
 
 class ExchangeRateFields(BaseModel):
-    rate_date: date
+    rate_date: date = Field(description="Calendar date on which this rate is effective.")
     base_currency: str = Field(
         min_length=3,
         max_length=3,
         pattern=r"^[A-Za-z]{3}$",
+        description="Currency held by the store and used as the rate base.",
     )
     target_currency: str = Field(
         min_length=3,
         max_length=3,
         pattern=r"^[A-Za-z]{3}$",
+        description="Foreign currency quoted by the rate.",
     )
-    side: ExchangeRateSide
+    side: ExchangeRateSide = Field(
+        description="BUY when the store acquires target currency; SELL when it provides target currency."
+    )
     exchange_rate: Decimal = Field(
         gt=0,
         max_digits=20,
         decimal_places=10,
+        description="Number of base-currency units per one target-currency unit.",
     )
 
     @field_validator("base_currency", "target_currency")
@@ -130,55 +135,69 @@ class ExchangeRateResponse(ExchangeRateFields):
 
 
 class ExchangeRateBatchResponse(BaseModel):
-    rates: list[ExchangeRateResponse]
-    count: int
+    rates: list[ExchangeRateResponse] = Field(description="The exchange-rate records in the batch.")
+    count: int = Field(description="Number of records in rates.")
 
 
 class ExchangeRateBatchDeleteResponse(BaseModel):
-    rate_date: date
-    base_currency: str
-    deleted_count: int
+    rate_date: date = Field(description="Date whose rates were deleted.")
+    base_currency: str = Field(description="Base currency whose daily rates were deleted.")
+    deleted_count: int = Field(description="Number of rate records deleted.")
 
 
 class ForeignExchangeTransactionFields(BaseModel):
-    transaction_id: UUID | None = None
-    transaction_timestamp: datetime
+    transaction_id: UUID | None = Field(
+        default=None,
+        description="Identifier shared by the legs of one logical transaction.",
+    )
+    transaction_timestamp: datetime = Field(
+        description="Timestamp supplied for the transaction and rate selection.",
+    )
     base_currency: str = Field(
         min_length=3,
         max_length=3,
         pattern=r"^[A-Za-z]{3}$",
+        description="Store or home currency used as the rate base.",
     )
     target_currency: str = Field(
         min_length=3,
         max_length=3,
         pattern=r"^[A-Za-z]{3}$",
+        description="Foreign currency represented by this transaction leg.",
     )
-    side: ExchangeRateSide
+    side: ExchangeRateSide = Field(
+        description="BUY or SELL operation applied to this transaction leg.",
+    )
     effective_rate: Decimal = Field(
         gt=0,
         max_digits=20,
         decimal_places=10,
+        description="Exchange rate snapshot used for this transaction leg.",
     )
     foreign_amount: Decimal = Field(
         gt=0,
         max_digits=20,
         decimal_places=10,
+        description="Final amount in target_currency after calculation.",
     )
     base_amount: Decimal = Field(
         gt=0,
         max_digits=20,
         decimal_places=10,
+        description="Final amount in base_currency after calculation.",
     )
     rounding_adjustment: Decimal | None = Field(
         default=None,
         max_digits=20,
         decimal_places=10,
+        description="Signed adjustment produced by currency rounding, when applicable.",
     )
     fee: Decimal | None = Field(
         default=None,
         ge=0,
         max_digits=20,
         decimal_places=10,
+        description="Fee applied to this transaction leg, when applicable.",
     )
 
     @field_validator("base_currency", "target_currency")
@@ -237,24 +256,32 @@ class ForeignExchangeTransactionCreate(BaseModel):
 class TransactionOperationFields(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    transaction_id: UUID | None = None
-    transaction_timestamp: datetime
+    transaction_id: UUID | None = Field(
+        default=None,
+        description="Optional client-supplied grouping ID; generated when omitted.",
+    )
+    transaction_timestamp: datetime = Field(
+        description="Timestamp used to select the applicable daily exchange rate.",
+    )
     target_currency: str = Field(
         min_length=3,
         max_length=3,
         pattern=r"^[A-Za-z]{3}$",
+        description="Foreign currency involved in the transaction.",
     )
     foreign_amount: Decimal | None = Field(
         default=None,
         gt=0,
         max_digits=20,
         decimal_places=10,
+        description="Amount of target_currency to buy or sell. Provide exactly one amount field.",
     )
     base_amount: Decimal | None = Field(
         default=None,
         gt=0,
         max_digits=20,
         decimal_places=10,
+        description="Amount in the store's home currency. Provide exactly one amount field.",
     )
 
     @field_validator("target_currency")
@@ -278,31 +305,42 @@ class SellTransactionCreate(TransactionOperationFields):
 
 
 class CrossSellTransactionCreate(BaseModel):
+    """Convert one non-home currency into another through the home currency."""
+
     model_config = ConfigDict(extra="forbid")
 
-    transaction_id: UUID | None = None
-    transaction_timestamp: datetime
+    transaction_id: UUID | None = Field(
+        default=None,
+        description="Optional grouping ID shared by the two resulting transaction legs.",
+    )
+    transaction_timestamp: datetime = Field(
+        description="Timestamp used to select both daily exchange rates.",
+    )
     source_currency: str = Field(
         min_length=3,
         max_length=3,
         pattern=r"^[A-Za-z]{3}$",
+        description="The non-home currency being exchanged away.",
     )
     target_currency: str = Field(
         min_length=3,
         max_length=3,
         pattern=r"^[A-Za-z]{3}$",
+        description="The non-home currency being received.",
     )
     source_amount: Decimal | None = Field(
         default=None,
         gt=0,
         max_digits=20,
         decimal_places=10,
+        description="Amount of source_currency to exchange. Mutually exclusive with target_amount.",
     )
     target_amount: Decimal | None = Field(
         default=None,
         gt=0,
         max_digits=20,
         decimal_places=10,
+        description="Amount of target_currency to receive. Mutually exclusive with source_amount.",
     )
 
     @field_validator("source_currency", "target_currency")
@@ -330,6 +368,10 @@ class ForeignExchangeTransactionUpdate(ForeignExchangeTransactionFields):
 class ForeignExchangeTransactionResponse(ForeignExchangeTransactionFields):
     model_config = ConfigDict(from_attributes=True)
 
-    id: UUID
-    transaction_id: UUID
-    created_at: datetime | None
+    id: UUID = Field(description="Unique identifier for this persisted transaction leg.")
+    transaction_id: UUID = Field(
+        description="Identifier shared by both legs of a cross-sell transaction.",
+    )
+    created_at: datetime | None = Field(
+        description="Timestamp when this transaction leg was persisted.",
+    )
