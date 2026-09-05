@@ -217,9 +217,28 @@ OpenAPI documentation is available at `http://localhost:8000/docs`.
 docker compose up --build
 ```
 
-Compose starts the API and connects it to the PostgreSQL instance running on the host. Docker
-uses `host.docker.internal` to reach the host, and the API reads rates from the `fx_exam`
-database.
+Compose starts the API and a PostgreSQL 16 database. The API waits for PostgreSQL to become
+healthy, runs `alembic upgrade head`, and then starts Uvicorn. PostgreSQL data is stored in the
+`postgres_data` Docker volume.
+
+To rebuild the database from scratch:
+
+```powershell
+docker compose down -v
+docker compose up --build
+```
+
+For local development without Docker, set `DATABASE_URL` in `.env` and run migrations with:
+
+```powershell
+alembic upgrade head
+```
+
+Create a new migration after changing a model with:
+
+```powershell
+alembic revision --autogenerate -m "describe the change"
+```
 
 ### Test and lint
 

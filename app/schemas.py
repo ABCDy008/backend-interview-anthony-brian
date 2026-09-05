@@ -1,85 +1,116 @@
 from datetime import date, datetime
 from decimal import Decimal
-from enum import StrEnum
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
-class Side(StrEnum):
-    BUY = "BUY"
-    SELL = "SELL"
-
-
-class DailyRateCreate(BaseModel):
+class ExchangeRateFields(BaseModel):
     rate_date: date
-    base_currency: str = Field(min_length=3, max_length=3)
-    quote_currency: str = Field(min_length=3, max_length=3)
-    side: Side
-    rate: Decimal = Field(gt=0)
+    base_currency: str = Field(
+        min_length=3,
+        max_length=3,
+        pattern=r"^[A-Za-z]{3}$",
+    )
+    target_currency: str = Field(
+        min_length=3,
+        max_length=3,
+        pattern=r"^[A-Za-z]{3}$",
+    )
+    exchange_rate: Decimal = Field(
+        gt=0,
+        max_digits=20,
+        decimal_places=10,
+    )
+
+    @field_validator("base_currency", "target_currency")
+    @classmethod
+    def normalize_currency(cls, value: str) -> str:
+        return value.upper()
+
+
+class ExchangeRateCreate(ExchangeRateFields):
+    pass
+
+
+class ExchangeRateBatchItem(BaseModel):
+    target_currency: str = Field(
+        min_length=3,
+        max_length=3,
+        pattern=r"^[A-Za-z]{3}$",
+    )
+    exchange_rate: Decimal = Field(
+        gt=0,
+        max_digits=20,
+        decimal_places=10,
+    )
+
+    @field_validator("target_currency")
+    @classmethod
+    def normalize_currency(cls, value: str) -> str:
+        return value.upper()
+
+
+class ExchangeRateBatchCreate(BaseModel):
+    rate_date: date
+    base_currency: str = Field(
+        min_length=3,
+        max_length=3,
+        pattern=r"^[A-Za-z]{3}$",
+    )
+    rates: list[ExchangeRateBatchItem] = Field(min_length=1, max_length=500)
+
+    @field_validator("base_currency")
+    @classmethod
+    def normalize_currency(cls, value: str) -> str:
+        return value.upper()
 
     @model_validator(mode="after")
-    def normalize_currencies(self):
-        self.base_currency = self.base_currency.upper()
-        self.quote_currency = self.quote_currency.upper()
-        if self.base_currency == self.quote_currency:
-            raise ValueError("base_currency and quote_currency must differ")
+    def validate_unique_targets(self):
+        targets = [item.target_currency for item in self.rates]
+        if len(targets) != len(set(targets)):
+            raise ValueError("rates must not contain duplicate target_currency values")
+        if self.base_currency in targets:
+            raise ValueError("target_currency must differ from base_currency")
         return self
 
 
-class DailyRateResponse(DailyRateCreate):
-    model_config = ConfigDict(from_attributes=True)
-    id: int
+class ExchangeRateBatchUpdate(BaseModel):
+    base_currency: str = Field(
+        min_length=3,
+        max_length=3,
+        pattern=r"^[A-Za-z]{3}$",
+    )
+    rates: list[ExchangeRateBatchItem] = Field(min_length=1, max_length=500)
 
-
-class RateCreate(BaseModel):
-    currency_code: str = Field(min_length=3, max_length=3, pattern=r"^[A-Za-z]{3}$")
-    currency_name: str = Field(min_length=1, max_length=50)
-    rate_per_usd: Decimal = Field(gt=0, max_digits=18, decimal_places=6)
+    @field_validator("base_currency")
+    @classmethod
+    def normalize_currency(cls, value: str) -> str:
+        return value.upper()
 
     @model_validator(mode="after")
-    def normalize_currency(self):
-        self.currency_code = self.currency_code.upper()
+    def validate_unique_targets(self):
+        targets = [item.target_currency for item in self.rates]
+        if len(targets) != len(set(targets)):
+            raise ValueError("rates must not contain duplicate target_currency values")
+        if self.base_currency in targets:
+            raise ValueError("target_currency must differ from base_currency")
         return self
 
 
-class USDExchangeRateResponse(BaseModel):
+class ExchangeRateResponse(ExchangeRateFields):
     model_config = ConfigDict(from_attributes=True)
+
     id: UUID
-    currency_code: str
-    currency_name: str
-    rate_per_usd: Decimal
-    last_updated_at: datetime | None
+    created_at: datetime | None
 
 
-class TransactionCreate(BaseModel):
-    transaction_timestamp: datetime
-    base_currency: str = Field(min_length=3, max_length=3)
-    quote_currency: str = Field(min_length=3, max_length=3)
-    side: Side
-    foreign_amount: Decimal | None = Field(default=None, gt=0)
-    base_amount: Decimal | None = Field(default=None, gt=0)
-
-    @model_validator(mode="after")
-    def validate_amounts(self):
-        if (self.foreign_amount is None) == (self.base_amount is None):
-            raise ValueError("provide exactly one of foreign_amount or base_amount")
-        self.base_currency = self.base_currency.upper()
-        self.quote_currency = self.quote_currency.upper()
-        if self.base_currency == self.quote_currency:
-            raise ValueError("base_currency and quote_currency must differ")
-        return self
+class ExchangeRateBatchResponse(BaseModel):
+    rates: list[ExchangeRateResponse]
+    count: int
 
 
-class TransactionResponse(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
-    transaction_id: str
-    transaction_timestamp: datetime
+class ExchangeRateBatchDeleteResponse(BaseModel):
+    rate_date: date
     base_currency: str
-    quote_currency: str
-    side: Side
-    foreign_amount: Decimal
-    base_amount: Decimal
-    effective_rate: Decimal
-    fee_amount: Decimal
-    rounding_adjustment: Decimal
+    deleted_count: int

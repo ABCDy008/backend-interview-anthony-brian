@@ -7,7 +7,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 
 class Settings(BaseSettings):
-    database_url: str = "sqlite:///./fx_api.db"
+    database_url: str = "postgresql+psycopg://fx_api:fx_api@localhost:5432/fx_api"
     model_config = SettingsConfigDict(env_file=PROJECT_ROOT / ".env", extra="ignore")
 
 
