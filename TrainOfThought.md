@@ -1,23 +1,24 @@
 # Money Changer Web API
 
-## Local Development Quick Reference
+# Local Development Quick Reference
 
-1. **Prerequisites:** Install Docker Desktop with Compose, or Python 3.14 for running the API directly.
-2. **Build the containers:** From this directory, run `docker compose build`.
-3. **Start the application:** Run `docker compose up --build`. The API container automatically runs `alembic upgrade head`, seeds the exchange rates, and starts Uvicorn.
-4. **Operate the application:**
-    - API: `http://localhost:8000`
+1. **Prerequisites:** Install and start Docker Desktop.
+2. **Clone and enter the repository:** Change to the repository's root directory, the directory containing `docker-compose.yml`.
+3. **Start the application:** Run `docker compose up --build`. The API container automatically runs the database migrations, seeds the exchange rates, and starts Uvicorn. Keep this terminal open while using the application.
+4. **Access the application:**
     - Swagger UI: `http://localhost:8000/`
-    - Swagger alias: `http://localhost:8000/docs`
-    - ReDoc: `http://localhost:8000/redoc`
-    - OpenAPI JSON: `http://localhost:8000/openapi.json`
+    - API documentation: `http://localhost:8000/docs`
     - Health check: `http://localhost:8000/health`
-5. **Inspect the running stack:** Use `docker compose ps` for status and `docker compose logs -f api` for API logs.
-6. **Run tests locally:** Use `python -m pytest -q`; measure coverage with `python -m coverage run -m pytest -q` followed by `python -m coverage report -m`.
-7. **Run lint and compilation checks:** Use `ruff check app tests` and `python -m compileall -q app tests`.
-8. **Run the API directly:** Copy `.env.example` to `.env`, create a Python 3.14 virtual environment, install with `python -m pip install -e ".[dev]"`, start PostgreSQL with `docker compose up -d db`, run `alembic upgrade head`, run `python -m scripts.seed`, then start with `uvicorn app.main:app --reload`.
-9. **Stop the application:** Press `Ctrl+C` for a foreground `docker compose up`, or run `docker compose down` from another terminal.
-10. **Reset the database:** Run `docker compose down -v` to stop the stack and delete the PostgreSQL volume, then run `docker compose up --build` to rebuild the database from migrations and seed data. This deletes local database data.
+5. You can now access the different APIs documented on the documentation.
+6. **Stop the application:** Press `Ctrl+C` in the terminal running Compose.
+
+# Running Unit Tests
+1. py -3.14 -m venv .venv (create base virtual env)
+2. .\.venv\Scripts\Activate.ps1 (activate and go inside virtual env)
+3. python -m pip install -e ".[dev]" (do the installs)
+4. python -m pytest -q (Run Unit Tests)
+5. python -m coverage run -m pytest -q (Run Unit Tests and compile coverage report)
+6. python -m coverage report -m (Read the coverage report)
 
 # Functional Requirements
 Functional Requirements
@@ -97,6 +98,7 @@ Functional Requirements
     - This project uses all of the items here. They should all be aptly named, except for the routes, which are split into different files to split the endpoint definitions.
 6. [DONE] Provide unit tests for rate lookup and transaction calculation rules.
     - The unit tests in `tests/test_transaction_operations.py` covers exact rate-key lookup, missing rates, BUY/SELL calculations, rounding, signed adjustments, fees, and effective-rate snapshots.
+    - The coverage is not ideal at overall 46% but I just created tests for the rate lookup and the transaction stuff for now.
 7. [DONE] Keep the API behavior and business rules clearly documented.
     - We generated a swagger documentation for the project. They clearly show the description of each endpoint, the expected schema, and the expected response.
 8. [DONE] Make the system extensible so new transaction types can be added with minimal changes to existing integration points.
@@ -109,6 +111,7 @@ Functional Requirements
 ## Assumptions
 1. To start, the assumption here is that I will get the exchange rates from a separate area and will have an ingestion pipeline for adding the exchange rates to the database. I have elected to use the values that can be fetched from https://github.com/fawazahmed0/exchange-api, a free currency exchange rates API. For the purposes of this exam, I will assume these are correct (I will not verify the correctness). I will also ask AI to trim down the coins and the cryptocurrency as they are not requirements for the functional requirements (FRs) and the non-functional requirements (NFRs). Again, I will assume that the end result of this is a proper list of exchange rates.
 2. I will use PHP as the base currency. If the Money Changer store is here, then it makes sense for PHP to be the base currency as the store will probably have that in the largest quantities.
+3. I don't know which APIs will be used and which will be not. For example, I created CRUD APIs for the transactions but am almost sure that the use case will only call for the POST ones since it is designated as a logging application. But for the sake of completeness, I will include everything for now. It would be trivial to remove them if needed. But for documentation, I do think all the API endpoints in exchange_rates.py is needed, but for transactions.py, only the 3 post endpoints are really needed in practice. You wouldn't be using the API to GET, PUT, or DEL from this table, even for maintenance.
 
 ## Future Considerations
 1. In terms of both technical and business aspect, it would be good for the store to cater to popular exchanges outside of the base currency like USD to JPY or something like that with a direct trade rather than a cross sell. This means identifying these popular exchanges and creating rows for them explicitly. Nominating these types of exchanges can be done after analyzing demand. This would make the store's pricing on these specific conversions become more competitive with other stores, potentially. This would also lessen the impact of rounding errors as you only do one rounding instead of two.
