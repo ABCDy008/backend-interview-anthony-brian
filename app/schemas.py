@@ -43,15 +43,12 @@ class ExchangeRateFields(BaseModel):
         description="Number of base-currency units per one target-currency unit.",
     )
 
+
+class ExchangeRateCreate(ExchangeRateFields):
     @field_validator("base_currency", "target_currency")
     @classmethod
     def normalize_currency(cls, value: str) -> str:
         return normalize_currency_code(value)
-
-
-class ExchangeRateCreate(ExchangeRateFields):
-    pass
-
 
 class ExchangeRateValueUpdate(BaseModel):
     exchange_rate: Decimal = Field(
@@ -105,25 +102,13 @@ class ExchangeRateBatchCreate(BaseModel):
 
 
 class ExchangeRateBatchUpdate(BaseModel):
-    base_currency: str = Field(
-        min_length=3,
-        max_length=3,
-        pattern=r"^[A-Za-z]{3}$",
-    )
     rates: list[ExchangeRateBatchItem] = Field(min_length=1, max_length=500)
-
-    @field_validator("base_currency")
-    @classmethod
-    def normalize_currency(cls, value: str) -> str:
-        return normalize_currency_code(value)
 
     @model_validator(mode="after")
     def validate_unique_targets(self):
         pairs = [(item.target_currency, item.side) for item in self.rates]
         if len(pairs) != len(set(pairs)):
             raise ValueError("rates must not contain duplicate target_currency and side values")
-        if self.base_currency in {item.target_currency for item in self.rates}:
-            raise ValueError("target_currency must differ from base_currency")
         return self
 
 
@@ -200,11 +185,6 @@ class ForeignExchangeTransactionFields(BaseModel):
         description="Fee applied to this transaction leg, when applicable.",
     )
 
-    @field_validator("base_currency", "target_currency")
-    @classmethod
-    def normalize_currency(cls, value: str) -> str:
-        return normalize_currency_code(value)
-
     @model_validator(mode="after")
     def validate_currency_pair(self):
         if self.base_currency == self.target_currency:
@@ -256,10 +236,6 @@ class ForeignExchangeTransactionCreate(BaseModel):
 class TransactionOperationFields(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    transaction_id: UUID | None = Field(
-        default=None,
-        description="Optional client-supplied grouping ID; generated when omitted.",
-    )
     transaction_timestamp: datetime = Field(
         description="Timestamp used to select the applicable daily exchange rate.",
     )
@@ -309,10 +285,6 @@ class CrossSellTransactionCreate(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    transaction_id: UUID | None = Field(
-        default=None,
-        description="Optional grouping ID shared by the two resulting transaction legs.",
-    )
     transaction_timestamp: datetime = Field(
         description="Timestamp used to select both daily exchange rates.",
     )
@@ -359,10 +331,6 @@ class CrossSellTransactionCreate(BaseModel):
         if (self.source_amount is None) == (self.target_amount is None):
             raise ValueError("provide exactly one of source_amount or target_amount")
         return self
-
-
-class ForeignExchangeTransactionUpdate(ForeignExchangeTransactionFields):
-    transaction_id: UUID | None = None
 
 
 class ForeignExchangeTransactionResponse(ForeignExchangeTransactionFields):

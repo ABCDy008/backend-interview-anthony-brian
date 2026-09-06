@@ -12,21 +12,22 @@
 5. You can now access the different APIs documented on the documentation.
 6. **Stop the application:** Press `Ctrl+C` in the terminal running Compose.
 
-# API Contract Guide
+# API Contract Rationale
 
-The exchange-rate API exposes both resource-ID operations and business-key operations
-because they serve different workflows:
+The exchange-rate API exposes collection, batch, and business-key operations:
 
 - `GET /exchange-rates` returns a collection and supports optional date and currency filters.
-- `GET /exchange-rates/lookup` returns exactly one rate when all four business-key fields are supplied: `rate_date`, `base_currency`, `target_currency`, and `side`.
-- `GET /exchange-rates/{rate_id}` retrieves one rate when its UUID is known.
-- `POST /exchange-rates` creates one rate. `POST /exchange-rates/batch` creates a daily rate set for one base currency and returns the created records with a count.
-- `PUT /exchange-rates/batch/{rate_date}` replaces a complete daily rate set. `DELETE /exchange-rates/batch/{rate_date}` removes all rates for a date and base currency.
-- The business-key `PUT` and `DELETE` routes are convenient when the caller has the date, currencies, and side but does not have the UUID. The UUID routes remain available for direct resource operations.
+- `GET /exchange-rates/{rate_date}/{base_currency}/{target_currency}/{side}` returns exactly one rate for the complete business key.
+- `POST /exchange-rates/batch` creates a daily rate set for one base currency and returns the created records with a count.
+- `PUT /exchange-rates/{rate_date}/{base_currency}` replaces an existing complete daily rate set; it does not create a new one. `POST /exchange-rates/batch` creates a daily rate set, and `DELETE /exchange-rates/{rate_date}/{base_currency}` removes all rates for a date and base currency.
+- The business-key `PUT` route identifies one rate by date, currencies, and side.
 
 For transactions, BUY and SELL each return one transaction record. Cross-sell returns two
 records in execution order: a BUY leg for the source currency followed by a SELL leg for
-the target currency. Both records share the same `transaction_id`.
+the target currency. Both records share a server-generated `transaction_id`. Transactions
+are immutable after creation. `GET /transactions/{transaction_id}` returns all legs for
+one logical transaction, while `GET /transactions?transaction_date=YYYY-MM-DD` returns
+transactions occurring during that business day.
 
 # Running Unit Tests
 1. py -3.14 -m venv .venv (create base virtual env)
@@ -56,7 +57,7 @@ Functional Requirements
 4. [DONE] Support BUY and SELL transaction sides with potentially different rates.
     - For this one, yes the application supports BUY and SELL as well as a cross-sell functionality if we want to convert two non-home currencies (i.e. USD to JPY).
     - The rates being different for BUY and SELL is something that is inherent with the initial seed of the `exchange_rates` table.
-    - I put in a total of 172 currency pairs between PHP and other currencies as test data, but doubled them to 344 since I would have a separate exchange rate for BUY and SELL and wanted them to be configurable.
+    - I put in a total of 167 currency pairs between PHP and other currencies as test data, but doubled them to 334 since I would have a separate exchange rate for BUY and SELL and wanted them to be configurable.
     - For the test data, I just put a spread of 1% (0.99 and 1.01) but the daily exchange rate pipeline could just as easily pass in different pre-configured numbers.
     - I imagine this feature will be useful since there are currencies that are rarer/more regulated than others and therefore we can have different margins for them.
 5. [DONE] Provide CRUD operations for daily exchange rates.
@@ -127,7 +128,7 @@ Functional Requirements
 ## Assumptions
 1. To start, the assumption here is that I will get the exchange rates from a separate area and will have an ingestion pipeline for adding the exchange rates to the database. I have elected to use the values that can be fetched from https://github.com/fawazahmed0/exchange-api, a free currency exchange rates API. For the purposes of this exam, I will assume these are correct (I will not verify the correctness). I will also ask AI to trim down the coins and the cryptocurrency as they are not requirements for the functional requirements (FRs) and the non-functional requirements (NFRs). Again, I will assume that the end result of this is a proper list of exchange rates.
 2. I will use PHP as the base currency. If the Money Changer store is here, then it makes sense for PHP to be the base currency as the store will probably have that in the largest quantities.
-3. I don't know which APIs will be used and which will be not. For example, I created CRUD APIs for the transactions but am almost sure that the use case will only call for the POST ones since it is designated as a logging application. But for the sake of completeness, I will include everything for now. It would be trivial to remove them if needed. But for documentation, I do think all the API endpoints in exchange_rates.py is needed, but for transactions.py, only the 3 post endpoints are really needed in practice. You wouldn't be using the API to GET, PUT, or DEL from this table, even for maintenance.
+3. Transactions are treated as immutable financial records. The API exposes the three creation endpoints, logical transaction reads, and business-day collection reads. Corrections should be handled through a controlled administrative or reversal workflow rather than changing or deleting historical rows.
 
 ## Future Considerations
 1. In terms of both technical and business aspect, it would be good for the store to cater to popular exchanges outside of the base currency like USD to JPY or something like that with a direct trade rather than a cross sell. This means identifying these popular exchanges and creating rows for them explicitly. Nominating these types of exchanges can be done after analyzing demand. This would make the store's pricing on these specific conversions become more competitive with other stores, potentially. This would also lessen the impact of rounding errors as you only do one rounding instead of two.

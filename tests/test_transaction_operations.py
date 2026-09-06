@@ -11,6 +11,7 @@ from app.schemas import (
     BuyTransactionCreate,
     CrossSellTransactionCreate,
     ExchangeRateCreate,
+    ExchangeRateResponse,
     SellTransactionCreate,
 )
 from app.services import (
@@ -134,6 +135,22 @@ def test_currency_codes_are_normalized_to_uppercase():
 
     assert payload.base_currency == "PHP"
     assert payload.target_currency == "USD"
+
+
+def test_exchange_rate_response_accepts_persisted_legacy_currency_code():
+    response = ExchangeRateResponse.model_validate(
+        {
+            "id": "0198f2c3-0a4b-7c8d-9e0f-123456789abc",
+            "rate_date": "2026-09-05",
+            "base_currency": "PHP",
+            "target_currency": "ANG",
+            "side": "BUY",
+            "exchange_rate": "0.0287702130",
+            "created_at": None,
+        }
+    )
+
+    assert response.target_currency == "ANG"
 
 
 @pytest.mark.parametrize(

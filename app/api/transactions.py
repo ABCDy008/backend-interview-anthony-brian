@@ -1,8 +1,9 @@
-from datetime import datetime
-from typing import Annotated
+from datetime import date, datetime
+from typing import Annotated, Any
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.database import get_db
@@ -12,7 +13,6 @@ from app.schemas import (
     CrossSellTransactionCreate,
     ExchangeRateSide,
     ForeignExchangeTransactionResponse,
-    ForeignExchangeTransactionUpdate,
     SellTransactionCreate,
 )
 from app.services import (
@@ -21,14 +21,28 @@ from app.services import (
     create_buy_transaction,
     create_cross_sell_transaction,
     create_sell_transaction,
-    delete_foreign_exchange_transaction,
-    get_foreign_exchange_transaction,
+    get_foreign_exchange_transactions,
     list_foreign_exchange_transactions,
-    update_foreign_exchange_transaction,
 )
 
 router = APIRouter(prefix="/transactions", tags=["transactions"])
 DbSession = Annotated[Session, Depends(get_db)]
+
+
+class ValidationErrorItem(BaseModel):
+    type: str
+    loc: list[str | int]
+    msg: str
+    input: Any | None = None
+    ctx: dict[str, Any] | None = None
+
+
+class ValidationErrorResponse(BaseModel):
+    detail: list[ValidationErrorItem]
+
+
+class ErrorResponse(BaseModel):
+    detail: str
 
 
 def _transaction_conflict(error: MissingExchangeRateError) -> HTTPException:
@@ -47,14 +61,103 @@ def _invalid_operation(error: InvalidTransactionOperationError) -> HTTPException
     response_model=list[ForeignExchangeTransactionResponse],
     summary="List transactions",
     description=(
-        "List persisted transaction legs with optional timestamp, currency, side, and "
-        "pagination filters. A cross-sell appears as two records sharing one transaction_id."
+        "List immutable transaction legs with optional business date, exact timestamp, "
+        "currency, side, and pagination filters. The business date uses the configured "
+        "store timezone. A cross-sell appears as two records sharing one transaction_id."
     ),
     response_description="The matching persisted transaction legs.",
+    responses={
+        200: {
+            "description": "The matching persisted transaction legs.",
+            "content": {
+                "application/json": {
+                    "examples": {
+                        "singleLeg": {
+                            "summary": "One BUY transaction",
+                            "value": [
+                                {
+                                    "id": "0198f2b3-7c5a-7e01-8b2d-123456789abc",
+                                    "transaction_id": "0198f2b3-7c5a-7e01-8b2d-123456789abd",
+                                    "transaction_timestamp": "2026-09-06T10:30:00Z",
+                                    "base_currency": "PHP",
+                                    "target_currency": "USD",
+                                    "side": "BUY",
+                                    "effective_rate": "0.0161164831",
+                                    "foreign_amount": "100.0000000000",
+                                    "base_amount": "5825.0000000000",
+                                    "rounding_adjustment": "0.0000000000",
+                                    "fee": "1.0000000000",
+                                    "created_at": "2026-09-06T10:30:01Z",
+                                }
+                            ],
+                        },
+                        "crossSell": {
+                            "summary": "Both legs of a cross-sell",
+                            "description": "A cross-sell returns two records sharing transaction_id.",
+                            "value": [
+                                {
+                                    "id": "0198f2b3-7c5a-7e01-8b2d-123456789abc",
+                                    "transaction_id": "0198f2b3-7c5a-7e01-8b2d-123456789abd",
+                                    "transaction_timestamp": "2026-09-06T10:30:00Z",
+                                    "base_currency": "PHP",
+                                    "target_currency": "USD",
+                                    "side": "BUY",
+                                    "effective_rate": "0.0161164831",
+                                    "foreign_amount": "100.0000000000",
+                                    "base_amount": "5825.0000000000",
+                                    "rounding_adjustment": "0.0000000000",
+                                    "fee": "1.0000000000",
+                                    "created_at": "2026-09-06T10:30:01Z",
+                                },
+                                {
+                                    "id": "0198f2b3-7c5a-7e02-8b2d-123456789abe",
+                                    "transaction_id": "0198f2b3-7c5a-7e01-8b2d-123456789abd",
+                                    "transaction_timestamp": "2026-09-06T10:30:00Z",
+                                    "base_currency": "PHP",
+                                    "target_currency": "JPY",
+                                    "side": "SELL",
+                                    "effective_rate": "1.9500000000",
+                                    "foreign_amount": "11358.9743589744",
+                                    "base_amount": "22150.0000000000",
+                                    "rounding_adjustment": "0.0000000000",
+                                    "fee": "0.5000000000",
+                                    "created_at": "2026-09-06T10:30:01Z",
+                                },
+                            ],
+                        },
+                        "noMatches": {
+                            "summary": "No matching transactions",
+                            "value": [],
+                        },
+                    }
+                }
+            },
+        },
+        422: {
+            "model": ValidationErrorResponse,
+            "description": "One or more query parameters are invalid.",
+            "content": {
+                "application/json": {
+                    "example": {
+                        "detail": [
+                            {
+                                "type": "enum",
+                                "loc": ["query", "side"],
+                                "msg": "Input should be 'BUY' or 'SELL'",
+                                "input": "HOLD",
+                                "ctx": {"expected": "'BUY' or 'SELL'"},
+                            }
+                        ]
+                    }
+                }
+            },
+        },
+    },
 )
 def list_transactions(
     session: DbSession,
     transaction_id: Annotated[UUID | None, Query()] = None,
+    transaction_date: Annotated[date | None, Query()] = None,
     transaction_timestamp: Annotated[datetime | None, Query()] = None,
     base_currency: Annotated[str | None, Query(min_length=3, max_length=3)] = None,
     target_currency: Annotated[str | None, Query(min_length=3, max_length=3)] = None,
@@ -66,6 +169,7 @@ def list_transactions(
         list_foreign_exchange_transactions(
             session,
             transaction_id=transaction_id,
+            transaction_date=transaction_date,
             transaction_timestamp=transaction_timestamp,
             base_currency=base_currency.upper() if base_currency else None,
             target_currency=target_currency.upper() if target_currency else None,
@@ -77,26 +181,78 @@ def list_transactions(
 
 
 @router.get(
-    "/{transaction_row_id}",
-    response_model=ForeignExchangeTransactionResponse,
-    summary="Get a transaction",
+    "/{transaction_id}",
+    response_model=list[ForeignExchangeTransactionResponse],
+    summary="Get transaction legs",
     description=(
-        "Retrieve one persisted transaction leg by its database row UUID. For a cross-sell, "
-        "use transaction_id with the collection endpoint to retrieve both legs."
+        "Retrieve all persisted legs for one logical transaction. A normal BUY or SELL "
+        "returns one leg; a cross-sell returns both legs."
     ),
-    responses={404: {"description": "Transaction not found."}},
+    response_description="All persisted legs for the logical transaction.",
+    responses={
+        200: {
+            "description": "All persisted legs for the logical transaction.",
+            "content": {
+                "application/json": {
+                    "example": [
+                        {
+                            "id": "0198f2b3-7c5a-7e01-8b2d-123456789abc",
+                            "transaction_id": "0198f2b3-7c5a-7e01-8b2d-123456789abd",
+                            "transaction_timestamp": "2026-09-06T10:30:00Z",
+                            "base_currency": "PHP",
+                            "target_currency": "USD",
+                            "side": "BUY",
+                            "effective_rate": "0.0161164831",
+                            "foreign_amount": "100.0000000000",
+                            "base_amount": "5825.0000000000",
+                            "rounding_adjustment": "0.0000000000",
+                            "fee": "1.0000000000",
+                            "created_at": "2026-09-06T10:30:01Z",
+                        }
+                    ]
+                }
+            },
+        },
+        404: {
+            "model": ErrorResponse,
+            "description": "No transaction exists for the supplied transaction_id.",
+            "content": {
+                "application/json": {
+                    "example": {"detail": "Foreign exchange transaction not found."}
+                }
+            },
+        },
+        422: {
+            "model": ValidationErrorResponse,
+            "description": "The transaction_id path parameter is not a valid UUID.",
+            "content": {
+                "application/json": {
+                    "example": {
+                        "detail": [
+                            {
+                                "type": "uuid_parsing",
+                                "loc": ["path", "transaction_id"],
+                                "msg": "Input should be a valid UUID",
+                                "input": "not-a-uuid",
+                            }
+                        ]
+                    }
+                }
+            },
+        },
+    },
 )
-def get_transaction(
-    transaction_row_id: UUID,
+def get_transaction_legs(
+    transaction_id: UUID,
     session: DbSession,
-) -> ForeignExchangeTransactionResponse:
-    transaction = get_foreign_exchange_transaction(session, transaction_row_id)
-    if transaction is None:
+) -> list[ForeignExchangeTransactionResponse]:
+    transactions = get_foreign_exchange_transactions(session, transaction_id)
+    if not transactions:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Foreign exchange transaction not found.",
         )
-    return transaction
+    return list(transactions)
 
 
 @router.post(
@@ -109,9 +265,110 @@ def get_transaction(
         "foreign_amount or base_amount. A fixed PHP 1.00 fee is deducted from the customer payout. "
         "The response is a one-item list containing the persisted BUY leg."
     ),
+    response_description="The persisted BUY transaction leg.",
+    openapi_extra={
+        "requestBody": {
+            "content": {
+                "application/json": {
+                    "examples": {
+                        "foreignAmount": {
+                            "summary": "Buy a specified foreign amount",
+                            "value": {
+                                "transaction_timestamp": "2026-09-06T10:30:00Z",
+                                "target_currency": "USD",
+                                "foreign_amount": "100.0000000000",
+                            },
+                        },
+                        "baseAmount": {
+                            "summary": "Spend a specified base amount",
+                            "value": {
+                                "transaction_timestamp": "2026-09-06T10:30:00Z",
+                                "target_currency": "USD",
+                                "base_amount": "5825.0000000000",
+                            },
+                        },
+                    }
+                }
+            }
+        }
+    },
     responses={
-        409: {"description": "No matching daily BUY rate exists."},
-        422: {"description": "Invalid amounts or insufficient amount to cover the fee."},
+        201: {
+            "description": "The BUY transaction was recorded.",
+            "content": {
+                "application/json": {
+                    "example": [
+                        {
+                            "id": "0198f2b3-7c5a-7e01-8b2d-123456789abc",
+                            "transaction_id": "0198f2b3-7c5a-7e01-8b2d-123456789abd",
+                            "transaction_timestamp": "2026-09-06T10:30:00Z",
+                            "base_currency": "PHP",
+                            "target_currency": "USD",
+                            "side": "BUY",
+                            "effective_rate": "0.0161164831",
+                            "foreign_amount": "100.0000000000",
+                            "base_amount": "5825.0000000000",
+                            "rounding_adjustment": "0.0000000000",
+                            "fee": "1.0000000000",
+                            "created_at": "2026-09-06T10:30:01Z",
+                        }
+                    ]
+                }
+            },
+        },
+        409: {
+            "model": ErrorResponse,
+            "description": "No matching daily BUY rate exists for the transaction date.",
+            "content": {
+                "application/json": {
+                    "example": {
+                        "detail": "No exchange rate exists for the requested date, currencies, and side."
+                    }
+                }
+            },
+        },
+        422: {
+            "model": ValidationErrorResponse,
+            "description": "The request is invalid, or the amount is insufficient after applying the fee.",
+            "content": {
+                "application/json": {
+                    "examples": {
+                        "bothAmountsProvided": {
+                            "summary": "Exactly one amount is required",
+                            "value": {
+                                "detail": [
+                                    {
+                                        "type": "value_error",
+                                        "loc": ["body"],
+                                        "msg": "Value error, provide exactly one of foreign_amount or base_amount",
+                                        "input": {
+                                            "transaction_timestamp": "2026-09-06T10:30:00Z",
+                                            "target_currency": "USD",
+                                            "foreign_amount": "100",
+                                            "base_amount": "5825",
+                                        },
+                                    }
+                                ]
+                            },
+                        },
+                        "invalidAmount": {
+                            "summary": "Amount must be positive",
+                            "value": {
+                                "detail": [
+                                    {
+                                        "type": "greater_than",
+                                        "loc": ["body", "foreign_amount"],
+                                        "msg": "Input should be greater than 0",
+                                        "input": "0",
+                                        "ctx": {"gt": 0},
+                                    }
+                                ]
+                            },
+                        },
+                    }
+                }
+            },
+        },
     },
 )
 def create_buy(
@@ -138,9 +395,110 @@ def create_buy(
         "foreign_amount or base_amount. A fixed PHP 0.50 fee is added to the customer payment. "
         "The response is a one-item list containing the persisted SELL leg."
     ),
+    response_description="The persisted SELL transaction leg.",
+    openapi_extra={
+        "requestBody": {
+            "content": {
+                "application/json": {
+                    "examples": {
+                        "foreignAmount": {
+                            "summary": "Sell a specified foreign amount",
+                            "value": {
+                                "transaction_timestamp": "2026-09-06T10:30:00Z",
+                                "target_currency": "USD",
+                                "foreign_amount": "100.0000000000",
+                            },
+                        },
+                        "baseAmount": {
+                            "summary": "Receive a specified base amount",
+                            "value": {
+                                "transaction_timestamp": "2026-09-06T10:30:00Z",
+                                "target_currency": "USD",
+                                "base_amount": "5910.0000000000",
+                            },
+                        },
+                    }
+                }
+            }
+        }
+    },
     responses={
-        409: {"description": "No matching daily SELL rate exists."},
-        422: {"description": "Invalid amounts or insufficient amount to cover the fee."},
+        201: {
+            "description": "The SELL transaction was recorded.",
+            "content": {
+                "application/json": {
+                    "example": [
+                        {
+                            "id": "0198f2b3-7c5a-7e01-8b2d-123456789abc",
+                            "transaction_id": "0198f2b3-7c5a-7e01-8b2d-123456789abd",
+                            "transaction_timestamp": "2026-09-06T10:30:00Z",
+                            "base_currency": "PHP",
+                            "target_currency": "USD",
+                            "side": "SELL",
+                            "effective_rate": "0.0157973449",
+                            "foreign_amount": "100.0000000000",
+                            "base_amount": "5910.0000000000",
+                            "rounding_adjustment": "0.0000000000",
+                            "fee": "0.5000000000",
+                            "created_at": "2026-09-06T10:30:01Z",
+                        }
+                    ]
+                }
+            },
+        },
+        409: {
+            "model": ErrorResponse,
+            "description": "No matching daily SELL rate exists for the transaction date.",
+            "content": {
+                "application/json": {
+                    "example": {
+                        "detail": "No exchange rate exists for the requested date, currencies, and side."
+                    }
+                }
+            },
+        },
+        422: {
+            "model": ValidationErrorResponse,
+            "description": "The request is invalid, or the amount is insufficient after applying the fee.",
+            "content": {
+                "application/json": {
+                    "examples": {
+                        "bothAmountsProvided": {
+                            "summary": "Exactly one amount is required",
+                            "value": {
+                                "detail": [
+                                    {
+                                        "type": "value_error",
+                                        "loc": ["body"],
+                                        "msg": "Value error, provide exactly one of foreign_amount or base_amount",
+                                        "input": {
+                                            "transaction_timestamp": "2026-09-06T10:30:00Z",
+                                            "target_currency": "USD",
+                                            "foreign_amount": "100",
+                                            "base_amount": "5825",
+                                        },
+                                    }
+                                ]
+                            },
+                        },
+                        "invalidAmount": {
+                            "summary": "Amount must be positive",
+                            "value": {
+                                "detail": [
+                                    {
+                                        "type": "greater_than",
+                                        "loc": ["body", "base_amount"],
+                                        "msg": "Input should be greater than 0",
+                                        "input": "0",
+                                        "ctx": {"gt": 0},
+                                    }
+                                ]
+                            },
+                        },
+                    }
+                }
+            },
+        },
     },
 )
 def create_sell(
@@ -174,9 +532,130 @@ def create_sell(
         "The two persisted transaction legs, returned in execution order: BUY source "
         "currency, then SELL target currency."
     ),
+    openapi_extra={
+        "requestBody": {
+            "content": {
+                "application/json": {
+                    "examples": {
+                        "sourceAmount": {
+                            "summary": "Exchange a source amount",
+                            "value": {
+                                "transaction_timestamp": "2026-09-06T10:30:00Z",
+                                "source_currency": "USD",
+                                "target_currency": "JPY",
+                                "source_amount": "100.0000000000",
+                            },
+                        },
+                        "targetAmount": {
+                            "summary": "Request a target amount",
+                            "value": {
+                                "transaction_timestamp": "2026-09-06T10:30:00Z",
+                                "source_currency": "USD",
+                                "target_currency": "JPY",
+                                "target_amount": "10000.0000000000",
+                            },
+                        },
+                    }
+                }
+            }
+        }
+    },
     responses={
-        409: {"description": "A required daily BUY or SELL rate is missing."},
-        422: {"description": "Invalid amounts or insufficient amount to cover a fee."},
+        201: {
+            "description": "Both cross-sell transaction legs were recorded.",
+            "content": {
+                "application/json": {
+                    "example": [
+                        {
+                            "id": "0198f2b3-7c5a-7e01-8b2d-123456789abc",
+                            "transaction_id": "0198f2b3-7c5a-7e01-8b2d-123456789abd",
+                            "transaction_timestamp": "2026-09-06T10:30:00Z",
+                            "base_currency": "PHP",
+                            "target_currency": "USD",
+                            "side": "BUY",
+                            "effective_rate": "0.0161164831",
+                            "foreign_amount": "100.0000000000",
+                            "base_amount": "5825.0000000000",
+                            "rounding_adjustment": "0.0000000000",
+                            "fee": "1.0000000000",
+                            "created_at": "2026-09-06T10:30:01Z",
+                        },
+                        {
+                            "id": "0198f2b3-7c5a-7e02-8b2d-123456789abe",
+                            "transaction_id": "0198f2b3-7c5a-7e01-8b2d-123456789abd",
+                            "transaction_timestamp": "2026-09-06T10:30:00Z",
+                            "base_currency": "PHP",
+                            "target_currency": "JPY",
+                            "side": "SELL",
+                            "effective_rate": "1.9500000000",
+                            "foreign_amount": "11358.9743589744",
+                            "base_amount": "22150.0000000000",
+                            "rounding_adjustment": "0.0000000000",
+                            "fee": "0.5000000000",
+                            "created_at": "2026-09-06T10:30:01Z",
+                        },
+                    ]
+                }
+            },
+        },
+        409: {
+            "model": ErrorResponse,
+            "description": "A required daily BUY or SELL rate is missing.",
+            "content": {
+                "application/json": {
+                    "example": {
+                        "detail": "No exchange rate exists for the requested date, currencies, and side."
+                    }
+                }
+            },
+        },
+        422: {
+            "model": ValidationErrorResponse,
+            "description": "The request is invalid, or the amount is insufficient after applying a fee.",
+            "content": {
+                "application/json": {
+                    "examples": {
+                        "bothAmountsProvided": {
+                            "summary": "Exactly one amount is required",
+                            "value": {
+                                "detail": [
+                                    {
+                                        "type": "value_error",
+                                        "loc": ["body"],
+                                        "msg": "Value error, provide exactly one of source_amount or target_amount",
+                                        "input": {
+                                            "transaction_timestamp": "2026-09-06T10:30:00Z",
+                                            "source_currency": "USD",
+                                            "target_currency": "JPY",
+                                            "source_amount": "100",
+                                            "target_amount": "10000",
+                                        },
+                                    }
+                                ]
+                            },
+                        },
+                        "sameCurrency": {
+                            "summary": "Currencies must differ",
+                            "value": {
+                                "detail": [
+                                    {
+                                        "type": "value_error",
+                                        "loc": ["body"],
+                                        "msg": "Value error, source_currency and target_currency must differ",
+                                        "input": {
+                                            "transaction_timestamp": "2026-09-06T10:30:00Z",
+                                            "source_currency": "USD",
+                                            "target_currency": "USD",
+                                            "source_amount": "100",
+                                        },
+                                    }
+                                ]
+                            },
+                        },
+                    }
+                }
+            },
+        },
     },
 )
 def create_cross_sell(
@@ -195,43 +674,3 @@ def create_cross_sell(
         raise _invalid_operation(error) from None
 
 
-@router.put(
-    "/{transaction_row_id}",
-    response_model=ForeignExchangeTransactionResponse,
-    summary="Update a transaction",
-    description="Replace editable fields on an existing transaction record.",
-    responses={404: {"description": "Transaction not found."}},
-)
-def update_transaction(
-    transaction_row_id: UUID,
-    payload: ForeignExchangeTransactionUpdate,
-    session: DbSession,
-) -> ForeignExchangeTransactionResponse:
-    transaction = get_foreign_exchange_transaction(session, transaction_row_id)
-    if transaction is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Foreign exchange transaction not found.",
-        )
-    return update_foreign_exchange_transaction(session, transaction, payload)
-
-
-@router.delete(
-    "/{transaction_row_id}",
-    status_code=status.HTTP_204_NO_CONTENT,
-    summary="Delete a transaction",
-    description="Delete an existing transaction record.",
-    responses={404: {"description": "Transaction not found."}},
-)
-def delete_transaction(
-    transaction_row_id: UUID,
-    session: DbSession,
-) -> Response:
-    transaction = get_foreign_exchange_transaction(session, transaction_row_id)
-    if transaction is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Foreign exchange transaction not found.",
-        )
-    delete_foreign_exchange_transaction(session, transaction)
-    return Response(status_code=status.HTTP_204_NO_CONTENT)

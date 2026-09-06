@@ -1,7 +1,8 @@
 from collections.abc import Sequence
-from datetime import date, datetime
+from datetime import date, datetime, time, timedelta
 from decimal import Decimal
 from uuid import UUID, uuid4
+from zoneinfo import ZoneInfo
 
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
@@ -15,16 +16,18 @@ from app.schemas import (
     CrossSellTransactionCreate,
     ExchangeRateBatchCreate,
     ExchangeRateBatchUpdate,
-    ExchangeRateCreate,
     ExchangeRateSide,
     ExchangeRateValueUpdate,
     ForeignExchangeTransactionCreate,
-    ForeignExchangeTransactionUpdate,
     SellTransactionCreate,
 )
 
 
 class DuplicateExchangeRateError(Exception):
+    pass
+
+
+class ExchangeRateBatchNotFoundError(Exception):
     pass
 
 
@@ -40,6 +43,7 @@ def list_foreign_exchange_transactions(
     session: Session,
     *,
     transaction_id: UUID | None = None,
+    transaction_date: date | None = None,
     transaction_timestamp: datetime | None = None,
     base_currency: str | None = None,
     target_currency: str | None = None,
@@ -54,6 +58,16 @@ def list_foreign_exchange_transactions(
     if transaction_id is not None:
         statement = statement.where(
             ForeignExchangeTransaction.transaction_id == transaction_id
+        )
+    if transaction_date is not None:
+        start = datetime.combine(
+            transaction_date,
+            time.min,
+            tzinfo=ZoneInfo(get_settings().business_timezone),
+        )
+        statement = statement.where(
+            ForeignExchangeTransaction.transaction_timestamp >= start,
+            ForeignExchangeTransaction.transaction_timestamp < start + timedelta(days=1),
         )
     if transaction_timestamp is not None:
         statement = statement.where(
@@ -72,11 +86,16 @@ def list_foreign_exchange_transactions(
     return session.scalars(statement.offset(offset).limit(limit)).all()
 
 
-def get_foreign_exchange_transaction(
+def get_foreign_exchange_transactions(
     session: Session,
-    transaction_row_id: UUID,
-) -> ForeignExchangeTransaction | None:
-    return session.get(ForeignExchangeTransaction, transaction_row_id)
+    transaction_id: UUID,
+) -> Sequence[ForeignExchangeTransaction]:
+    statement = (
+        select(ForeignExchangeTransaction)
+        .where(ForeignExchangeTransaction.transaction_id == transaction_id)
+        .order_by(ForeignExchangeTransaction.created_at, ForeignExchangeTransaction.id)
+    )
+    return session.scalars(statement).all()
 
 
 def create_foreign_exchange_transaction(
@@ -114,7 +133,6 @@ def create_buy_transaction(
         _create_single_leg_transaction(
             session,
             ForeignExchangeTransactionCreate(
-                transaction_id=payload.transaction_id,
                 transaction_timestamp=payload.transaction_timestamp,
                 base_currency=home_currency,
                 target_currency=payload.target_currency,
@@ -139,7 +157,6 @@ def create_sell_transaction(
         _create_single_leg_transaction(
             session,
             ForeignExchangeTransactionCreate(
-                transaction_id=payload.transaction_id,
                 transaction_timestamp=payload.transaction_timestamp,
                 base_currency=home_currency,
                 target_currency=payload.target_currency,
@@ -164,7 +181,6 @@ def create_cross_sell_transaction(
         )
     return _create_cross_currency_transaction(
         session,
-        transaction_id=payload.transaction_id,
         transaction_timestamp=payload.transaction_timestamp,
         source_currency=payload.source_currency,
         target_currency=payload.target_currency,
@@ -193,7 +209,7 @@ def _create_single_leg_transaction(
         base_amount=payload.base_amount,
     )
     transaction = ForeignExchangeTransaction(
-        transaction_id=payload.transaction_id,
+        transaction_id=uuid4(),
         transaction_timestamp=payload.transaction_timestamp,
         base_currency=payload.base_currency,
         target_currency=payload.target_currency,
@@ -213,7 +229,6 @@ def _create_single_leg_transaction(
 def _create_cross_currency_transaction(
     session: Session,
     *,
-    transaction_id: UUID | None,
     transaction_timestamp: datetime,
     source_currency: str,
     target_currency: str,
@@ -275,7 +290,7 @@ def _create_cross_currency_transaction(
         )
 
     # Two inserts can't both rely on the DB's uuidv7() default and still match.
-    transaction_id = transaction_id or uuid4()
+    transaction_id = uuid4()
     buy_leg = ForeignExchangeTransaction(
         transaction_id=transaction_id,
         transaction_timestamp=transaction_timestamp,
@@ -307,32 +322,13 @@ def _create_cross_currency_transaction(
     return [buy_leg, sell_leg]
 
 
-def update_foreign_exchange_transaction(
-    session: Session,
-    transaction: ForeignExchangeTransaction,
-    payload: ForeignExchangeTransactionUpdate,
-) -> ForeignExchangeTransaction:
-    for field, value in payload.model_dump(exclude_none=True).items():
-        setattr(transaction, field, value)
-    session.commit()
-    session.refresh(transaction)
-    return transaction
-
-
-def delete_foreign_exchange_transaction(
-    session: Session,
-    transaction: ForeignExchangeTransaction,
-) -> None:
-    session.delete(transaction)
-    session.commit()
-
-
 def list_exchange_rates(
     session: Session,
     *,
     rate_date: date | None = None,
     base_currency: str | None = None,
     target_currency: str | None = None,
+    side: str | None = None,
     offset: int = 0,
     limit: int = 100,
 ) -> Sequence[ExchangeRate]:
@@ -347,11 +343,9 @@ def list_exchange_rates(
         statement = statement.where(ExchangeRate.base_currency == base_currency)
     if target_currency is not None:
         statement = statement.where(ExchangeRate.target_currency == target_currency)
+    if side is not None:
+        statement = statement.where(ExchangeRate.side == side)
     return session.scalars(statement.offset(offset).limit(limit)).all()
-
-
-def get_exchange_rate(session: Session, rate_id: UUID) -> ExchangeRate | None:
-    return session.get(ExchangeRate, rate_id)
 
 
 def get_exchange_rate_by_key(
@@ -370,18 +364,6 @@ def get_exchange_rate_by_key(
             ExchangeRate.side == side,
         )
     )
-
-
-def create_exchange_rate(session: Session, payload: ExchangeRateCreate) -> ExchangeRate:
-    rate = ExchangeRate(**payload.model_dump())
-    session.add(rate)
-    try:
-        session.commit()
-    except IntegrityError as error:
-        session.rollback()
-        raise DuplicateExchangeRateError from error
-    session.refresh(rate)
-    return rate
 
 
 def create_exchange_rate_batch(
@@ -412,14 +394,18 @@ def create_exchange_rate_batch(
 def replace_exchange_rate_batch(
     session: Session,
     rate_date: date,
+    base_currency: str,
     payload: ExchangeRateBatchUpdate,
 ) -> list[ExchangeRate]:
     existing_rates = session.scalars(
         select(ExchangeRate).where(
             ExchangeRate.rate_date == rate_date,
-            ExchangeRate.base_currency == payload.base_currency,
+            ExchangeRate.base_currency == base_currency,
         )
     ).all()
+    if not existing_rates:
+        raise ExchangeRateBatchNotFoundError
+
     existing_by_pair = {
         (rate.target_currency, rate.side): rate for rate in existing_rates
     }
@@ -435,7 +421,7 @@ def replace_exchange_rate_batch(
         if rate is None:
             rate = ExchangeRate(
                 rate_date=rate_date,
-                base_currency=payload.base_currency,
+                    base_currency=base_currency,
                 target_currency=item.target_currency,
                 side=item.side,
                 exchange_rate=item.exchange_rate,
@@ -473,22 +459,6 @@ def delete_exchange_rate_batch(
     return len(rates)
 
 
-def update_exchange_rate(
-    session: Session,
-    rate: ExchangeRate,
-    payload: ExchangeRateCreate,
-) -> ExchangeRate:
-    for field, value in payload.model_dump().items():
-        setattr(rate, field, value)
-    try:
-        session.commit()
-    except IntegrityError as error:
-        session.rollback()
-        raise DuplicateExchangeRateError from error
-    session.refresh(rate)
-    return rate
-
-
 def update_exchange_rate_by_key(
     session: Session,
     *,
@@ -512,29 +482,3 @@ def update_exchange_rate_by_key(
     session.refresh(rate)
     return rate
 
-
-def delete_exchange_rate(session: Session, rate: ExchangeRate) -> None:
-    session.delete(rate)
-    session.commit()
-
-
-def delete_exchange_rate_by_key(
-    session: Session,
-    *,
-    rate_date: date,
-    base_currency: str,
-    target_currency: str,
-    side: str,
-) -> bool:
-    rate = get_exchange_rate_by_key(
-        session,
-        rate_date=rate_date,
-        base_currency=base_currency,
-        target_currency=target_currency,
-        side=side,
-    )
-    if rate is None:
-        return False
-    session.delete(rate)
-    session.commit()
-    return True
