@@ -7,6 +7,8 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 
 class Settings(BaseSettings):
+    """Configure database, business timezone, and home-currency settings."""
+
     database_url: str = "postgresql+psycopg://fx_api:fx_api@localhost:5432/fx_api"
     home_currency: str = "PHP"
     business_timezone: str = "Asia/Manila"
@@ -15,4 +17,5 @@ class Settings(BaseSettings):
 
 @lru_cache
 def get_settings() -> Settings:
+    """Return the cached application settings instance."""
     return Settings()

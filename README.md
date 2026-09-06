@@ -12,22 +12,28 @@
 5. You can now access the different APIs documented on the documentation.
 6. **Stop the application:** Press `Ctrl+C` in the terminal running Compose.
 
-# API Contract Rationale
+# API Endpoints Rationale
 
-The exchange-rate API exposes collection, batch, and business-key operations:
+## Health
 
-- `GET /exchange-rates` returns a collection and supports optional date and currency filters.
-- `GET /exchange-rates/{rate_date}/{base_currency}/{target_currency}/{side}` returns exactly one rate for the complete business key.
-- `POST /exchange-rates/batch` creates a daily rate set for one base currency and returns the created records with a count.
-- `PUT /exchange-rates/{rate_date}/{base_currency}` replaces an existing complete daily rate set; it does not create a new one. `POST /exchange-rates/batch` creates a daily rate set, and `DELETE /exchange-rates/{rate_date}/{base_currency}` removes all rates for a date and base currency.
-- The business-key `PUT` route identifies one rate by date, currencies, and side.
+- `GET /health` confirms that the API process is running without checking database connectivity. The purpose of this is as a generic health check for general troubleshooting, and potentially useful for health probes.
+- `GET /ready` verifies that the API can connect to the database and reports `503` when it cannot. This is the same expectation for health but for dependencies of the API. If I added redis cache, that would also be something this will flag.
 
-For transactions, BUY and SELL each return one transaction record. Cross-sell returns two
-records in execution order: a BUY leg for the source currency followed by a SELL leg for
-the target currency. Both records share a server-generated `transaction_id`. Transactions
-are immutable after creation. `GET /transactions/{transaction_id}` returns all legs for
-one logical transaction, while `GET /transactions?transaction_date=YYYY-MM-DD` returns
-transactions occurring during that business day.
+## Exchange Rates
+
+- `GET /exchange-rates` lists exchange-rate snapshots for a required date with optional currency, side, and pagination filters. This is the general exchange rates lookup endpoint. You can list all of the rows to create a full table. You can list all BUY side or SELL side exchange rates for more specific views. Then you can also do specific currency exchange rates.
+- `GET /exchange-rates/{rate_date}/{base_currency}/{target_currency}/{side}` retrieves one rate by its complete business key. This is potentially useful to fetch the specific exchange rate to display somewhere during the actual transaction flow in the POS system.
+- `POST /exchange-rates/batch` creates the BUY and SELL rates for a daily base-currency rate set. This is a batch post endpoint. This is the only POST endpoint because in my opinion, there would be no reason to POST individual entries. So a POST considers a full daily rate set, instead of individual rows in the exchange_rates table.
+- `PUT /exchange-rates/{rate_date}/{base_currency}` replaces every rate in an existing daily rate set. This is a full replace, hence the PUT. So the context is the whole daily rate set as well. This means this will override all rows in a certain date for a specific base_currency.
+- `PUT /exchange-rates/{rate_date}/{base_currency}/{target_currency}/{side}` updates only the value of one rate identified by its complete business key. This is for updating a specific exchange rate (row) in the table. This may be useful for operational usage.
+- `DELETE /exchange-rates/{rate_date}/{base_currency}` removes all rates in a daily rate set and reports how many records were deleted. This delete also does a full delete of a daily rate set for a base_currency. I didn't see a reason to have a specific delete for a resource since that would mean an inconsistent state that may break some of the APIs. But deleting a full daily rate set can be useful for operational usage.
+
+## Transactions
+
+- `GET /transactions` lists immutable transaction legs with optional logical transaction, date, currency, side, and pagination filters. This is the general transactions lookup. I only added this since I assume there will be some kind of monitoring tool or dashboard that would use the transactions.
+- `POST /transactions/purchases` records a BUY transaction for one foreign currency using either a foreign amount or a base-currency amount. I divided the transactions into three different setups so that one transaction POST endpoint will not abstract 3 three different functionalities. I intended to name this as /transactions/buy but that makes this a verb and is not proper naming convention so I changed to purchases.
+- `POST /transactions/sales` records a SELL transaction for one foreign currency using either a foreign amount or a base-currency amount. Same considerations above but for the opposite `side`.
+- `POST /transactions/exchanges` records linked BUY and SELL legs to convert one foreign currency into another through the home currency. This one is specially for when there are two foreign currencies. It has a separate setup because from how I architected the setup, exchanges will involve a buy and sell instead of a direct trade.
 
 # Running Unit Tests
 1. py -3.14 -m venv .venv (create base virtual env)
@@ -67,7 +73,7 @@ Functional Requirements
     b. Base currency
     c. Quote currency
     d. Transaction side
-    - This is how the transactions will get the exchange rate for a specific call. This applies to buy, sell, and cross-sell. Look for the `get_exchange_rate_by_key` function inside the `services.py` file.
+    - This is how the transactions will get the exchange rate for a specific call. This applies to buy, sell, and cross-sell. Look for the `get_exchange_rate_by_key` function inside `app/services/exchange_rates.py`.
 7. [DONE] Require exactly one of foreign_amount or base_amount as transaction input.
     - For this one, I implemented a bi-directional setup for BUY and SELL. If the caller specifies a foreign_amount, then the assumption is that the store will buy or sell that amount of foreign currency. If the caller specifies base_amount instead, then the store will buy or sell foreign currency up to that amount of base_currency.
     - Example: Imagine a USD target_currency on a BUY transaction. If the `foreign_amount` is 100, then the interpretation is that the store is buying 100 USD and will give the equivalent PHP for that side of the exchange rate. But if instead of `foreign_amount` the system uses `base_amount`, then what will happen is it would give USD up to 100 PHP, still using the BUY exchange rate.
@@ -83,9 +89,9 @@ Functional Requirements
 11. [DONE] Preserve the transaction’s effective rate if daily rates change later.
     - Even if someone changes the daily rates after it has been ingested and after a transaction happened, the `effective_rate` of that specific transaction will not change in the transactions table. Only newer transactions after the change will get that new rate applied.
 12. [DONE] Validate currency codes as three-letter ISO-style codes.
-    - We use pycountry, a third-party python library to enforce ISO 2417 checks. For a normal ISO-style check that we can configure (3 chars), something like XYZ can still pass. This makes it so only proper currencies can pass our checks in `schemas.py`
+    - We use pycountry, a third-party Python library to enforce ISO 4217 checks, so alphabetic values such as XYZ are rejected and only recognized currency codes pass validation in `app/schemas/exchange_rates.py`.
 13. [DONE] Validate that amounts are positive decimal values.
-    - We do this check on all amount fields in `schemas.py` file:
+    - We do this check on all amount fields in `app/schemas/transactions.py` and the exchange-rate schema files:
     - Decimal = Field(
         gt=0,
         max_digits=20,
@@ -95,7 +101,7 @@ Functional Requirements
     - This is already inherent with the decision to separate out the buy, sell, and cross-sell API endpoints.
     - Personally, I like this more because now the system will have to be intentional on what it wants to do, rather than abstracting three different logic flows inside it.
 15. [DONE] Return a clear conflict or validation error when no daily rate exists.
-    - Look into `_transaction_conflict` function on `transactions.py` file.
+    - Look into the `_transaction_conflict` function in `app/api/transactions.py`.
     - We can see this function used in the buy, sell, and cross-sell api endpoints.
 16. [DONE] Demonstrate inheritance or polymorphism, such as different calculation behavior for BUY and SELL.
     - BuyCalculation and SellCalculation, come from the same base class. They expose different behaviors like different directions for the fees. I would imagine that if we were to add other types of transactions, there would just be other classes extending from the base class but would expose other features like discounts, rebates, promos, convenience fees, etc.
@@ -114,8 +120,8 @@ Functional Requirements
 5. [DONE] Separate responsibilities into maintainable components such as routes, schemas, services, domain logic, and persistence models.
     - This project uses all of the items here. They should all be aptly named, except for the routes, which are split into different files to split the endpoint definitions.
 6. [DONE] Provide unit tests for rate lookup and transaction calculation rules.
-    - The unit tests in `tests/test_transaction_operations.py` covers exact rate-key lookup, missing rates, BUY/SELL calculations, rounding, signed adjustments, fees, and effective-rate snapshots.
-    - The coverage is not ideal at overall 46% but I just created tests for the rate lookup and the transaction stuff for now.
+    - The unit tests in the `tests/` directory cover exact rate-key lookup, missing rates, BUY/SELL calculations, rounding, signed adjustments, fees, effective-rate snapshots, schemas, and OpenAPI documentation.
+    - The current overall test coverage is 88%.
 7. [DONE] Keep the API behavior and business rules clearly documented.
     - We generated a swagger documentation for the project. They clearly show the description of each endpoint, the expected schema, and the expected response.
 8. [DONE] Make the system extensible so new transaction types can be added with minimal changes to existing integration points.

@@ -6,22 +6,26 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
+from app.api_docs.transactions import (
+    buy_openapi_extra,
+    cross_sell_openapi_extra,
+    sell_openapi_extra,
+)
 from app.database import get_db
 from app.domain import InsufficientAmountError
-from app.schemas import (
+from app.schemas.transactions import (
     BuyTransactionCreate,
     CrossSellTransactionCreate,
     ExchangeRateSide,
     ForeignExchangeTransactionResponse,
     SellTransactionCreate,
 )
-from app.services import (
+from app.services.transactions import (
     InvalidTransactionOperationError,
     MissingExchangeRateError,
     create_buy_transaction,
     create_cross_sell_transaction,
     create_sell_transaction,
-    get_foreign_exchange_transactions,
     list_foreign_exchange_transactions,
 )
 
@@ -30,6 +34,8 @@ DbSession = Annotated[Session, Depends(get_db)]
 
 
 class ValidationErrorItem(BaseModel):
+    """Represent one structured request-validation error."""
+
     type: str
     loc: list[str | int]
     msg: str
@@ -38,14 +44,19 @@ class ValidationErrorItem(BaseModel):
 
 
 class ValidationErrorResponse(BaseModel):
+    """Represent the API validation-error response body."""
+
     detail: list[ValidationErrorItem]
 
 
 class ErrorResponse(BaseModel):
+    """Represent a plain API error response."""
+
     detail: str
 
 
 def _transaction_conflict(error: MissingExchangeRateError) -> HTTPException:
+    """Map a missing exchange rate to an HTTP conflict response."""
     return HTTPException(
         status_code=status.HTTP_409_CONFLICT,
         detail="No exchange rate exists for the requested date, currencies, and side.",
@@ -53,6 +64,7 @@ def _transaction_conflict(error: MissingExchangeRateError) -> HTTPException:
 
 
 def _invalid_operation(error: InvalidTransactionOperationError) -> HTTPException:
+    """Map an invalid transaction operation to an HTTP validation response."""
     return HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(error))
 
 
@@ -62,8 +74,10 @@ def _invalid_operation(error: InvalidTransactionOperationError) -> HTTPException
     summary="List transactions",
     description=(
         "List immutable transaction legs with optional business date, exact timestamp, "
-        "currency, side, and pagination filters. The business date uses the configured "
-        "store timezone. A cross-sell appears as two records sharing one transaction_id."
+        "logical transaction ID, currency, side, and pagination filters. Use "
+        "transaction_id to retrieve all legs for one logical transaction. The business "
+        "date uses the configured store timezone. A cross-sell appears as two records "
+        "sharing one transaction_id."
     ),
     response_description="The matching persisted transaction legs.",
     responses={
@@ -165,6 +179,7 @@ def list_transactions(
     offset: Annotated[int, Query(ge=0)] = 0,
     limit: Annotated[int, Query(ge=1, le=100)] = 100,
 ) -> list[ForeignExchangeTransactionResponse]:
+    """List persisted transaction legs matching the supplied filters."""
     return list(
         list_foreign_exchange_transactions(
             session,
@@ -180,83 +195,8 @@ def list_transactions(
     )
 
 
-@router.get(
-    "/{transaction_id}",
-    response_model=list[ForeignExchangeTransactionResponse],
-    summary="Get transaction legs",
-    description=(
-        "Retrieve all persisted legs for one logical transaction. A normal BUY or SELL "
-        "returns one leg; a cross-sell returns both legs."
-    ),
-    response_description="All persisted legs for the logical transaction.",
-    responses={
-        200: {
-            "description": "All persisted legs for the logical transaction.",
-            "content": {
-                "application/json": {
-                    "example": [
-                        {
-                            "id": "0198f2b3-7c5a-7e01-8b2d-123456789abc",
-                            "transaction_id": "0198f2b3-7c5a-7e01-8b2d-123456789abd",
-                            "transaction_timestamp": "2026-09-06T10:30:00Z",
-                            "base_currency": "PHP",
-                            "target_currency": "USD",
-                            "side": "BUY",
-                            "effective_rate": "0.0161164831",
-                            "foreign_amount": "100.0000000000",
-                            "base_amount": "5825.0000000000",
-                            "rounding_adjustment": "0.0000000000",
-                            "fee": "1.0000000000",
-                            "created_at": "2026-09-06T10:30:01Z",
-                        }
-                    ]
-                }
-            },
-        },
-        404: {
-            "model": ErrorResponse,
-            "description": "No transaction exists for the supplied transaction_id.",
-            "content": {
-                "application/json": {
-                    "example": {"detail": "Foreign exchange transaction not found."}
-                }
-            },
-        },
-        422: {
-            "model": ValidationErrorResponse,
-            "description": "The transaction_id path parameter is not a valid UUID.",
-            "content": {
-                "application/json": {
-                    "example": {
-                        "detail": [
-                            {
-                                "type": "uuid_parsing",
-                                "loc": ["path", "transaction_id"],
-                                "msg": "Input should be a valid UUID",
-                                "input": "not-a-uuid",
-                            }
-                        ]
-                    }
-                }
-            },
-        },
-    },
-)
-def get_transaction_legs(
-    transaction_id: UUID,
-    session: DbSession,
-) -> list[ForeignExchangeTransactionResponse]:
-    transactions = get_foreign_exchange_transactions(session, transaction_id)
-    if not transactions:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Foreign exchange transaction not found.",
-        )
-    return list(transactions)
-
-
 @router.post(
-    "/buy",
+    "/purchases",
     response_model=list[ForeignExchangeTransactionResponse],
     status_code=status.HTTP_201_CREATED,
     summary="Record a BUY transaction",
@@ -266,32 +206,7 @@ def get_transaction_legs(
         "The response is a one-item list containing the persisted BUY leg."
     ),
     response_description="The persisted BUY transaction leg.",
-    openapi_extra={
-        "requestBody": {
-            "content": {
-                "application/json": {
-                    "examples": {
-                        "foreignAmount": {
-                            "summary": "Buy a specified foreign amount",
-                            "value": {
-                                "transaction_timestamp": "2026-09-06T10:30:00Z",
-                                "target_currency": "USD",
-                                "foreign_amount": "100.0000000000",
-                            },
-                        },
-                        "baseAmount": {
-                            "summary": "Spend a specified base amount",
-                            "value": {
-                                "transaction_timestamp": "2026-09-06T10:30:00Z",
-                                "target_currency": "USD",
-                                "base_amount": "5825.0000000000",
-                            },
-                        },
-                    }
-                }
-            }
-        }
-    },
+    openapi_extra=buy_openapi_extra(),
     responses={
         201: {
             "description": "The BUY transaction was recorded.",
@@ -375,6 +290,7 @@ def create_buy(
     payload: BuyTransactionCreate,
     session: DbSession,
 ) -> list[ForeignExchangeTransactionResponse]:
+    """Create a BUY transaction and return its persisted leg."""
     try:
         return create_buy_transaction(session, payload)
     except MissingExchangeRateError as error:
@@ -386,7 +302,7 @@ def create_buy(
 
 
 @router.post(
-    "/sell",
+    "/sales",
     response_model=list[ForeignExchangeTransactionResponse],
     status_code=status.HTTP_201_CREATED,
     summary="Record a SELL transaction",
@@ -396,32 +312,7 @@ def create_buy(
         "The response is a one-item list containing the persisted SELL leg."
     ),
     response_description="The persisted SELL transaction leg.",
-    openapi_extra={
-        "requestBody": {
-            "content": {
-                "application/json": {
-                    "examples": {
-                        "foreignAmount": {
-                            "summary": "Sell a specified foreign amount",
-                            "value": {
-                                "transaction_timestamp": "2026-09-06T10:30:00Z",
-                                "target_currency": "USD",
-                                "foreign_amount": "100.0000000000",
-                            },
-                        },
-                        "baseAmount": {
-                            "summary": "Receive a specified base amount",
-                            "value": {
-                                "transaction_timestamp": "2026-09-06T10:30:00Z",
-                                "target_currency": "USD",
-                                "base_amount": "5910.0000000000",
-                            },
-                        },
-                    }
-                }
-            }
-        }
-    },
+    openapi_extra=sell_openapi_extra(),
     responses={
         201: {
             "description": "The SELL transaction was recorded.",
@@ -505,6 +396,7 @@ def create_sell(
     payload: SellTransactionCreate,
     session: DbSession,
 ) -> list[ForeignExchangeTransactionResponse]:
+    """Create a SELL transaction and return its persisted leg."""
     try:
         return create_sell_transaction(session, payload)
     except MissingExchangeRateError as error:
@@ -516,7 +408,7 @@ def create_sell(
 
 
 @router.post(
-    "/cross-sell",
+    "/exchanges",
     response_model=list[ForeignExchangeTransactionResponse],
     status_code=status.HTTP_201_CREATED,
     summary="Record a cross-sell transaction",
@@ -532,34 +424,7 @@ def create_sell(
         "The two persisted transaction legs, returned in execution order: BUY source "
         "currency, then SELL target currency."
     ),
-    openapi_extra={
-        "requestBody": {
-            "content": {
-                "application/json": {
-                    "examples": {
-                        "sourceAmount": {
-                            "summary": "Exchange a source amount",
-                            "value": {
-                                "transaction_timestamp": "2026-09-06T10:30:00Z",
-                                "source_currency": "USD",
-                                "target_currency": "JPY",
-                                "source_amount": "100.0000000000",
-                            },
-                        },
-                        "targetAmount": {
-                            "summary": "Request a target amount",
-                            "value": {
-                                "transaction_timestamp": "2026-09-06T10:30:00Z",
-                                "source_currency": "USD",
-                                "target_currency": "JPY",
-                                "target_amount": "10000.0000000000",
-                            },
-                        },
-                    }
-                }
-            }
-        }
-    },
+    openapi_extra=cross_sell_openapi_extra(),
     responses={
         201: {
             "description": "Both cross-sell transaction legs were recorded.",

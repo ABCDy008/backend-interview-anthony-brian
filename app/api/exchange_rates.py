@@ -5,8 +5,13 @@ from fastapi import APIRouter, Depends, HTTPException, Path, Query, status
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
+from app.api_docs.exchange_rates import (
+    batch_create_openapi_extra,
+    batch_update_openapi_extra,
+    value_update_openapi_extra,
+)
 from app.database import get_db
-from app.schemas import (
+from app.schemas.exchange_rates import (
     ExchangeRateBatchCreate,
     ExchangeRateBatchDeleteResponse,
     ExchangeRateBatchResponse,
@@ -14,8 +19,9 @@ from app.schemas import (
     ExchangeRateResponse,
     ExchangeRateSide,
     ExchangeRateValueUpdate,
+    normalize_currency_code,
 )
-from app.services import (
+from app.services.exchange_rates import (
     DuplicateExchangeRateError,
     ExchangeRateBatchNotFoundError,
     create_exchange_rate_batch,
@@ -31,6 +37,8 @@ DbSession = Annotated[Session, Depends(get_db)]
 
 
 class ValidationErrorItem(BaseModel):
+    """Represent one structured request-validation error."""
+
     type: str
     loc: list[str | int]
     msg: str
@@ -39,6 +47,8 @@ class ValidationErrorItem(BaseModel):
 
 
 class ValidationErrorResponse(BaseModel):
+    """Represent the API validation-error response body."""
+
     detail: list[ValidationErrorItem]
 
 
@@ -232,6 +242,7 @@ def list_rates(
         Query(ge=1, le=500, description="Maximum records to return; defaults to 20."),
     ] = 20,
 ) -> list[ExchangeRateResponse]:
+    """List exchange-rate records matching the supplied query filters."""
     return list(
         list_exchange_rates(
             session,
@@ -326,6 +337,7 @@ def get_rate_by_key(
         Path(description="Rate side. Must be BUY or SELL."),
     ],
 ) -> ExchangeRateResponse:
+    """Return one exchange rate by its complete business key."""
     rate = get_exchange_rate_by_key(
         session,
         rate_date=rate_date,
@@ -355,30 +367,7 @@ def get_rate_by_key(
         "created records plus their count."
     ),
     response_description="The created exchange-rate records and their count.",
-    openapi_extra={
-        "requestBody": {
-            "content": {
-                "application/json": {
-                    "example": {
-                        "rate_date": "2026-09-06",
-                        "base_currency": "PHP",
-                        "rates": [
-                            {
-                                "target_currency": "USD",
-                                "side": "BUY",
-                                "exchange_rate": "0.0161164831",
-                            },
-                            {
-                                "target_currency": "USD",
-                                "side": "SELL",
-                                   "exchange_rate": "0.0157973449",
-                            },
-                        ],
-                    }
-                }
-            }
-        }
-    },
+    openapi_extra=batch_create_openapi_extra(),
     responses={
         201: {
             "description": "The rate set was created successfully.",
@@ -483,6 +472,7 @@ def create_rate_batch(
     payload: ExchangeRateBatchCreate,
     session: DbSession,
 ) -> ExchangeRateBatchResponse:
+    """Create a daily exchange-rate set and return its records and count."""
     try:
         rates = create_exchange_rate_batch(session, payload)
     except DuplicateExchangeRateError:
@@ -506,28 +496,7 @@ def create_rate_batch(
         "that date. The request body contains the complete target currencies, sides, "
         "and values; omitted existing rates are deleted."
     ),
-    openapi_extra={
-        "requestBody": {
-            "content": {
-                "application/json": {
-                    "example": {
-                        "rates": [
-                            {
-                                "target_currency": "USD",
-                                "side": "BUY",
-                                "exchange_rate": "0.0161164831",
-                            },
-                            {
-                                "target_currency": "USD",
-                                "side": "SELL",
-                                "exchange_rate": "0.0157973449",
-                            },
-                        ]
-                    }
-                }
-            }
-        }
-    },
+    openapi_extra=batch_update_openapi_extra(),
     responses={
         200: {
             "description": "The replacement daily rate set.",
@@ -588,6 +557,7 @@ def replace_rate_batch(
     payload: ExchangeRateBatchUpdate,
     session: DbSession,
 ) -> ExchangeRateBatchResponse:
+    """Replace an existing daily exchange-rate set."""
     normalized_base_currency = base_currency.upper()
     if normalized_base_currency in {
         item.target_currency for item in payload.rates
@@ -627,15 +597,7 @@ def replace_rate_batch(
         "/exchange-rates/2026-09-06/PHP/USD/BUY with {\"exchange_rate\": \"0.0161164831\"} "
         "updates the PHP/USD BUY rate for that date."
     ),
-    openapi_extra={
-        "requestBody": {
-            "content": {
-                "application/json": {
-                    "example": {"exchange_rate": "0.0161164831"}
-                }
-            }
-        }
-    },
+    openapi_extra=value_update_openapi_extra(),
     responses={
         200: {
             "description": "The updated exchange rate.",
@@ -696,6 +658,7 @@ def update_rate_by_key(
     payload: ExchangeRateValueUpdate,
     session: DbSession,
 ) -> ExchangeRateResponse:
+    """Update one exchange-rate value by its complete business key."""
     rate = update_exchange_rate_by_key(
         session,
         rate_date=rate_date,
@@ -737,7 +700,10 @@ def update_rate_by_key(
         },
         422: {
             "model": ValidationErrorResponse,
-            "description": "The rate_date or base_currency path parameter is invalid.",
+            "description": (
+                "The rate_date or base_currency path parameter is invalid. The base "
+                "currency must be a valid ISO 4217 code."
+            ),
             "content": {
                 "application/json": {
                     "example": {
@@ -764,7 +730,14 @@ def delete_rate_batch(
     ],
     session: DbSession,
 ) -> ExchangeRateBatchDeleteResponse:
-    normalized_base_currency = base_currency.upper()
+    """Delete a daily exchange-rate set and report the number removed."""
+    try:
+        normalized_base_currency = normalize_currency_code(base_currency)
+    except ValueError as error:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=str(error),
+        ) from error
     deleted_count = delete_exchange_rate_batch(
         session,
         rate_date,

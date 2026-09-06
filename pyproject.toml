@@ -38,6 +38,9 @@ target-version = "py314"
 
 [tool.coverage.run]
 source = ["app"]
+omit = [
+    "app/api_docs/*.py",
+]
 
 [tool.coverage.report]
 show_missing = true

@@ -11,15 +11,21 @@ router = APIRouter()
 
 
 class HealthResponse(BaseModel):
+    """Represent a successful liveness response."""
+
     status: Literal["ok"] = "ok"
 
 
 class ReadinessResponse(BaseModel):
+    """Represent a successful database readiness response."""
+
     status: Literal["ready"] = "ready"
     database: Literal["ok"] = "ok"
 
 
 class ErrorResponse(BaseModel):
+    """Represent a plain API error response."""
+
     detail: str
 
 
@@ -41,6 +47,7 @@ class ErrorResponse(BaseModel):
     },
 )
 def health() -> HealthResponse:
+    """Return a successful liveness response without checking dependencies."""
     return {"status": "ok"}
 
 
@@ -75,6 +82,7 @@ def health() -> HealthResponse:
     },
 )
 def ready() -> ReadinessResponse:
+    """Check database connectivity and return the service readiness state."""
     try:
         with engine.connect() as connection:
             connection.execute(text("SELECT 1"))

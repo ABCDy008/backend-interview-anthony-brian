@@ -7,10 +7,11 @@ from app.config import get_settings
 
 
 class Base(DeclarativeBase):
-    pass
+    """Provide the SQLAlchemy declarative base for application models."""
 
 
 def _connect_args(database_url: str) -> dict:
+    """Build PostgreSQL connection arguments from the configured database URL."""
     return {"check_same_thread": False} if database_url.startswith("sqlite") else {}
 
 
@@ -22,6 +23,7 @@ engine = create_engine(
 SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
 
 
-def get_db() -> Generator[Session, None, None]:
+def get_db() -> Generator[Session]:
+    """Yield a database session and close it after request processing."""
     with SessionLocal() as session:
         yield session

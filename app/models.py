@@ -19,6 +19,8 @@ from app.database import Base
 
 
 class ExchangeRate(Base):
+    """Persist one immutable exchange-rate snapshot."""
+
     __tablename__ = "exchange_rates"
     __table_args__ = (
         UniqueConstraint(
@@ -52,6 +54,8 @@ class ExchangeRate(Base):
     )
 
 class Transaction(Base):
+    """Define columns shared by all persisted transaction records."""
+
     __abstract__ = True
 
     id: Mapped[uuid.UUID] = mapped_column(
@@ -73,6 +77,8 @@ class Transaction(Base):
 
 
 class ForeignExchangeTransaction(Transaction):
+    """Persist one BUY or SELL leg of a foreign-exchange transaction."""
+
     __tablename__ = "foreign_exchange_transactions"
     __table_args__ = (
         CheckConstraint(

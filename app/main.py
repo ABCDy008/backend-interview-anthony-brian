@@ -1,5 +1,5 @@
-from contextlib import asynccontextmanager
 from collections import OrderedDict
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.openapi.utils import get_openapi
@@ -13,6 +13,7 @@ __all__ = ["app", "engine"]
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
+    """Manage application startup and shutdown resources."""
     yield
 
 
@@ -57,6 +58,7 @@ app = FastAPI(
 
 @app.get("/docs", include_in_schema=False)
 def docs_alias() -> RedirectResponse:
+    """Redirect the legacy documentation path to the Swagger UI root."""
     return RedirectResponse(url="/", status_code=307)
 
 
@@ -64,6 +66,7 @@ app.include_router(router)
 
 
 def custom_openapi():
+    """Generate and cache the OpenAPI document with preferred route ordering."""
     if app.openapi_schema:
         return app.openapi_schema
 
@@ -83,10 +86,9 @@ def custom_openapi():
         "/exchange-rates/{rate_date}/{base_currency}",
         "/exchange-rates/{rate_date}/{base_currency}/{target_currency}/{side}",
         "/transactions",
-        "/transactions/buy",
-        "/transactions/sell",
-        "/transactions/cross-sell",
-        "/transactions/{transaction_id}",
+        "/transactions/purchases",
+        "/transactions/sales",
+        "/transactions/exchanges",
     ]
     path_order = {path: index for index, path in enumerate(preferred_paths)}
     app.openapi_schema["paths"] = OrderedDict(
